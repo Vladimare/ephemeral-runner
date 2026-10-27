@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic stale runner cleanup (%i)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=ephemeral-runner-cleanup@%i.service
+
+[Install]
+WantedBy=timers.target
