@@ -1,0 +1,21 @@
+[Unit]
+Description=Ephemeral GitHub Actions runner (%i)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=-/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --sweep
+ExecStart=/usr/local/libexec/ephemeral-runner/runner-once.sh %i
+ExecStop=/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --current
+ExecStopPost=-/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --current
+Restart=always
+RestartSec=15
+TimeoutStopSec=120
+# docker run returns 143 (128 + SIGTERM) on a deliberate docker stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
