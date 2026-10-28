@@ -4,11 +4,12 @@ umask 077
 
 INSTANCE=${1:?Usage: runner-once.sh INSTANCE}
 [[ "$INSTANCE" =~ ^[a-z][a-z0-9-]{0,19}$ ]] || { echo 'Invalid instance' >&2; exit 2; }
-BASE=/etc/ephemeral-runner
-CONF="$BASE/$INSTANCE.env"
-AUTH="$BASE/$INSTANCE.curl.conf"
+BASE="/etc/ephemeral-runner/instances/$INSTANCE"
+CONF="$BASE/config.env"
+AUTH="$BASE/auth.curl.conf"
 STATE_DIR="/var/lib/ephemeral-runner/$INSTANCE"
-ENTRYPOINT=/usr/local/libexec/ephemeral-runner/entrypoint.sh
+RUNTIME=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+ENTRYPOINT="$RUNTIME/docker/entrypoint.sh"
 
 [[ -f "$CONF" && -f "$AUTH" ]] || { echo 'Missing instance configuration or auth file' >&2; exit 2; }
 [[ $(stat -c %u "$CONF") == 0 && $(stat -c %u "$AUTH") == 0 ]] || { echo 'Config must be owned by root' >&2; exit 2; }
