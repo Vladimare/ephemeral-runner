@@ -196,6 +196,28 @@ class InstallerTests(unittest.TestCase):
                 self.installer.instance('upgrade', 'a', 'v2')
             self.assertEqual('profiles/v1', os.readlink(self.home() / 'current'))
 
+    def test_upgrade_missing_instance_leaves_install_retryable(self):
+        with self.assertRaises(FileNotFoundError):
+            self.installer.instance('upgrade', 'a', 'v1')
+        self.assertFalse(self.home().exists())
+        self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        self.assertEqual([], list(self.home().parent.iterdir()))
+        self.installer.instance('recover', 'a')
+        self.assertFalse(self.home().exists())
+        self.install()
+        self.assertEqual('profiles/v1', os.readlink(self.home() / 'current'))
+
+    def test_upgrade_missing_current_profile_does_not_repair_instance(self):
+        self.install()
+        profile = self.home() / 'profiles' / 'v1'
+        shutil.rmtree(profile)
+        before = self.snapshot(self.home())
+        with self.assertRaises(FileNotFoundError):
+            self.installer.instance('upgrade', 'a', 'v1')
+        self.assertEqual(before, self.snapshot(self.home()))
+        self.assertFalse(profile.exists())
+        self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+
     def test_existing_pat_and_legacy_config_never_overwritten(self):
         legacy = self.installer.base / 'a.curl.conf'
         legacy.write_text('secret')

@@ -39,17 +39,18 @@ class Installer:
     def command(args):
         return subprocess.run(args, check=True, text=True, capture_output=True, timeout=60).stdout.strip()
 
-    def directory(self, path):
+    def directory(self, path, *, create=True):
         # Traverse without following symlinks. Existing ancestors must be trusted;
         # only root (same uid in tests) may replace entries while locks are held.
         relative = path.relative_to(self.root)
         current = self.root
         for part in relative.parts:
             current /= part
-            try:
-                current.mkdir(mode=0o700)
-            except FileExistsError:
-                pass
+            if create:
+                try:
+                    current.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
             info = current.lstat()
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid or info.st_mode & 0o022:
                 raise RuntimeError(f'Untrusted directory: {current}')
@@ -97,7 +98,7 @@ class Installer:
         path = self.release(version)
         if not path.exists():
             raise RuntimeError("Runtime is not installed; run runtime-install first")
-        self.directory(path)
+        self.directory(path, create=False)
         # Verify files as well as metadata; refuse damaged or replaced releases.
         for name in (*FILES, 'manifest.json'):
             info = (path / name).lstat()
@@ -231,13 +232,14 @@ class Installer:
                 self.run(['docker', 'image', 'inspect', image])
                 previous = None
             else:
-                self.directory(home)
+                self.directory(home, create=False)
                 current = os.readlink(home / 'current')
                 if not current.startswith('profiles/'):
                     raise RuntimeError('Invalid current profile')
                 previous = current.removeprefix('profiles/')
                 if not re.fullmatch(VERSION, previous) or previous in ('.', '..'):
                     raise RuntimeError('Invalid current profile')
+                self.directory(home / 'profiles' / previous, create=False)
                 self.verify(previous)
                 if previous == version:
                     return
@@ -268,7 +270,7 @@ class Installer:
                     self.profile(working, version, instance)
                 else:
                     # Reuse only byte-identical profiles on rollback/retry.
-                    self.directory(profile)
+                    self.directory(profile, create=False)
                     for source, name in zip(FILES[3:], self.names(instance)):
                         expected = (runtime / source).read_text().replace('/usr/local/libexec/ephemeral-runner/', f'/usr/local/libexec/ephemeral-runner/releases/{version}/scripts/')
                         if (profile / name).is_symlink() or (profile / name).read_text() != expected:
