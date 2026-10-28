@@ -83,12 +83,13 @@ class CleanupTests(unittest.TestCase):
     def test_config_parses_generated_format(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / 'loom.env').write_text(
+            (base / 'loom').mkdir()
+            (base / 'loom' / 'config.env').write_text(
                 'REPOSITORY=Vladimare/loom\nRUNNER_LABEL=er-loom-abc12345\n'
                 'RUNNER_PREFIX=er-loom-abc12345\nDOCKER_NETWORK=loom-ci\n'
                 'RUNNER_IMAGE=ephemeral-runner:2.338.0\n'
             )
-            (base / 'loom.curl.conf').write_text('header = "Authorization: Bearer TEST"\n')
+            (base / 'loom' / 'auth.curl.conf').write_text('header = "Authorization: Bearer TEST"\n')
             with patch.object(mod, 'CONFIG_BASE', base), patch.object(mod, 'check_private_root'):
                 cfg = mod.load_config('loom')
                 self.assertEqual(cfg.repository, 'Vladimare/loom')
@@ -102,7 +103,8 @@ class CleanupTests(unittest.TestCase):
     def test_config_rejects_extra_shell_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / 'loom.env').write_text('REPOSITORY=$(curl.example.com)\n')
+            (base / 'loom').mkdir()
+            (base / 'loom' / 'config.env').write_text('REPOSITORY=$(curl.example.com)\n')
             with patch.object(mod, 'CONFIG_BASE', base), patch.object(mod, 'check_private_root'):
                 with self.assertRaises(ValueError):
                     mod.load_config('loom')

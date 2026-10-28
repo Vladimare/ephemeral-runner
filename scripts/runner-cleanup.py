@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-CONFIG_BASE = Path('/etc/ephemeral-runner')
+CONFIG_BASE = Path('/etc/ephemeral-runner/instances')
 STATE_BASE = Path('/var/lib/ephemeral-runner')
 INSTANCE_RE = re.compile(r'[a-z][a-z0-9-]{0,19}\Z')
 REPOSITORY_RE = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
@@ -33,7 +33,7 @@ class Config:
 
     @property
     def auth(self):
-        return CONFIG_BASE / f'{self.instance}.curl.conf'
+        return CONFIG_BASE / self.instance / 'auth.curl.conf'
 
     @property
     def state(self):
@@ -56,7 +56,7 @@ def check_private_root(path):
 def load_config(instance):
     if not INSTANCE_RE.fullmatch(instance):
         raise ValueError(f'Invalid instance name: {instance!r}')
-    path = CONFIG_BASE / f'{instance}.env'
+    path = CONFIG_BASE / instance / 'config.env'
     check_private_root(path)
     data = {}
     for raw in path.read_text().splitlines():
@@ -76,7 +76,7 @@ def load_config(instance):
         raise ValueError('Invalid dedicated runner label/name prefix')
     if data['DOCKER_NETWORK'] in ('host', 'bridge', 'none'):
         raise ValueError('A dedicated Docker network must be configured')
-    check_private_root(CONFIG_BASE / f'{instance}.curl.conf')
+    check_private_root(CONFIG_BASE / instance / 'auth.curl.conf')
     return Config(instance, data['REPOSITORY'], data['RUNNER_LABEL'],
                   data['RUNNER_PREFIX'], data['DOCKER_NETWORK'], data['RUNNER_IMAGE'])
 

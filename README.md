@@ -19,19 +19,33 @@ sudo docker build -f docker/Dockerfile -t ephemeral-runner:2.338.0 .
 # Create and SECURE a dedicated Docker bridge, per docs/NETWORK_SECURITY.md.
 sudo docker network create er-ci # only if not already present; NOT isolated yet
 
-sudo ./scripts/install.sh \
+sudo ./scripts/install.sh runtime-install --version v1
+sudo ./scripts/install.sh instance-install --version v1 \
   --instance loom \
   --repo Vladimare/loom \
   --network er-ci \
   --image ephemeral-runner:2.338.0
 ```
 
-The installer prints a **unique label** such as `er-loom-abcdef12` and creates `/etc/ephemeral-runner/loom.env` (mode 0600). It refuses to overwrite existing instances. `--instance` is a local, unique identifier; use `gsd` or `myproject` for additional repositories. Run the installer again for each repository, with its corresponding `--repo` value. A single host may run multiple instances, each with isolated configuration, state and registration namespace.
+Runtime installation is a separate operation: it publishes an immutable, checksummed
+release in `/usr/local/libexec/ephemeral-runner/releases/v1`. Repeating it with the
+same bytes is harmless; reusing a version with different bytes is rejected. Choose
+an explicit new version for new code. Installing another instance never replaces
+shared scripts or template units used by an existing instance.
+
+Instance installation generates a **unique label** such as `er-loom-abcdef12` in
+`/etc/ephemeral-runner/instances/loom/config.env` and an empty `auth.curl.conf`
+(both mode 0600). Each instance pins its release through its `current` profile;
+concrete systemd units retain the documented `ephemeral-runner@loom.service` and
+`ephemeral-runner-cleanup@loom.timer` names. Services remain stopped. Use another
+instance identifier and repository to provision another independent runner.
+Existing instances, credentials, state and legacy flat configuration are never
+overwritten. Legacy installations require a separately planned manual migration.
 
 Fill the dedicated root-only curl config file:
 
 ```bash
-sudoedit /etc/ephemeral-runner/loom.curl.conf
+sudoedit /etc/ephemeral-runner/instances/loom/auth.curl.conf
 ```
 
 Example file content (**replace the placeholder and never commit a real PAT**):
@@ -43,13 +57,13 @@ header = "Authorization: Bearer YOUR_FINE_GRAINED_PAT"
 Validate restrictive permissions:
 
 ```bash
-sudo chmod 0600 /etc/ephemeral-runner/loom.curl.conf
-sudo chmod 0600 /etc/ephemeral-runner/loom.env
-sudo /usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance loom --audit
+sudo chmod 0600 /etc/ephemeral-runner/instances/loom/auth.curl.conf
+sudo chmod 0600 /etc/ephemeral-runner/instances/loom/config.env
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --audit
 sudo systemctl enable --now ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.timer
 ```
 
-Find the actual label in `/etc/ephemeral-runner/loom.env` and route repository workflows to it:
+Find the actual label in `/etc/ephemeral-runner/instances/loom/config.env` and route repository workflows to it:
 
 ```yaml
 runs-on: [self-hosted, Linux, X64, er-loom-abcdef12]
@@ -62,9 +76,9 @@ Run a *trusted* CI job to verify registration, execution and one-shot replacemen
 ```bash
 systemctl status ephemeral-runner@loom.service
 sudo journalctl -u ephemeral-runner@loom.service -f
-sudo /usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance loom --audit
-sudo /usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance loom --sweep --dry-run
-sudo /usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance loom --sweep
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --audit
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --sweep --dry-run
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --sweep
 
 # ONLY when the runner is Idle in GitHub:
 sudo systemctl stop ephemeral-runner@loom.service
@@ -79,7 +93,51 @@ The cleanup timer sweeps orphan registrations after crashes and reboots, and tol
 
 ## Upgrade / revoke
 
-Stop the service when Idle; update the image and scripts by rerunning the installer **only for a fresh instance** (the installer intentionally does not overwrite existing configuration). For manual upgrades, replace `/usr/local/libexec/ephemeral-runner` scripts and systemd units and run `systemctl daemon-reload`. Rebuild images for security patches and newer runner releases, verifying release checksums; do not use `latest` implicitly. When permanently retiring an instance, stop it, check `--audit`/`--sweep`, disable the service and timer, and revoke its GitHub PAT.
+Install new source as a **new immutable version**; then explicitly select it for
+one stopped instance. Rollback selects the previous retained version using the
+same command. Configuration, PAT, image selection, labels and state remain intact:
+
+```bash
+sudo ./scripts/install.sh runtime-install --version v2
+# Only after verifying GitHub reports Idle; stopping a busy runner cancels its job:
+sudo systemctl stop ephemeral-runner-cleanup@loom.timer ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.service
+sudo ./scripts/install.sh upgrade --instance loom --version v2
+# Roll back while still stopped, if needed:
+sudo ./scripts/install.sh upgrade --instance loom --version v1
+# Explicit operator action, after verification:
+sudo systemctl start ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.timer
+```
+
+The installer refuses active/transitioning services or timers and fails closed on
+unknown systemd states. Coordinate maintenance with other administrators: do not
+start units concurrently with installation, recovery or upgrade. Installer locks
+serialize runtime publication and same-instance transactions; they do not lock out
+external `systemctl` commands. No command implicitly starts/restarts a runner.
+Use the cleanup binary from the instance's selected release for manual operations.
+Retain old releases for rollback; automatic garbage collection is not provided.
+Image upgrades remain a separate explicit configuration/validation operation.
+
+Instance transactions retain a root-only journal until `daemon-reload` succeeds.
+Caught failures roll back automatically. If rollback/reload fails or a process is
+killed, stop all three units, then run:
+
+```bash
+sudo ./scripts/install.sh recover --instance loom
+```
+
+Recovery restores the previous profile for an upgrade. A partial new installation
+is moved to `/etc/ephemeral-runner/instances/.recovered-loom-*`, preserving any
+credentials/configuration for operator inspection; its managed unit links are
+removed. Retry installation only after successful recovery. Orphan `.stage-*`
+runtime/profile/instance directories and `.journal-*` files are unpublished and can be
+removed during coordinated, stopped maintenance; never delete retained releases
+or recovered credentials blindly. Recovery is idempotent and never deletes runner
+state. Power-loss guarantees depend on local filesystem rename/fsync semantics;
+validate on the intended Linux filesystem before production deployment.
+
+When retiring an instance, stop it when Idle, audit/sweep registrations, disable
+its service/timer and revoke its PAT. This tooling does not modify or migrate the
+deployed LOOM runner.
 
 ## Security
 
@@ -91,5 +149,13 @@ This is a constrained container runner, **not a hardened VM**. Untrusted PRs can
 python3 -m unittest discover -s tests -v
 bash -n scripts/*.sh docker/entrypoint.sh
 ```
+
+Installer tests use real temporary files and process locks, with mocked Docker and
+systemd commands and dummy credentials. They cover failure boundaries, version
+isolation, concurrency, upgrade and recovery; they do not establish production
+readiness. Linux Docker/systemd validation must still check unit loading/enabling,
+idle stop/restart, timer activation, interrupted transactions and power loss. The
+existing cleanup safety tests remain required. Resource budgets, additional
+credential hardening and broader shell CI coverage are separate follow-ups.
 
 MIT licensed. See [LICENSE](LICENSE).
