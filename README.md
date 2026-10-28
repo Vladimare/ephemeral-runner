@@ -143,11 +143,22 @@ deployed LOOM runner.
 
 This is a constrained container runner, **not a hardened VM**. Untrusted PRs can still attack the shared host kernel; restrict permissions and triggers. For strict isolation use a disposable VM or dedicated runner machine. Read [network security and threat model](docs/NETWORK_SECURITY.md) before enabling any runner. Do not mount Docker's socket or repository secrets into the job container.
 
+Config and PAT files must be regular files owned by root with **exactly 0600**
+permissions. Both launcher and cleanup reject symbolic links (including parent
+components), non-root owners and group/world writable parent directories. The
+shared validator traverses using directory descriptors and no-follow opens before
+config parsing or Docker/GitHub access. Validation does not make later Bash,
+Python and curl pathname reads atomic: trusted root administrators must not
+replace files or change directory permissions concurrently with runner use.
+Other root processes remain trusted; ACLs and mount changes require host policy.
+
 ## Development
 
 ```bash
 python3 -m unittest discover -s tests -v
-bash -n scripts/*.sh docker/entrypoint.sh
+for file in scripts/*.sh docker/entrypoint.sh; do
+  bash -n "$file" || exit 1
+done
 ```
 
 Installer tests use real temporary files and process locks, with mocked Docker and
