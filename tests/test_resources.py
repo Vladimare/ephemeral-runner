@@ -203,7 +203,10 @@ class ResourceTests(unittest.TestCase):
         self.assertIn('max-size=10485760', args)
         self.assertIn('max-file=3', args)
         self.assertIn('/tmp:rw,nosuid,nodev,size=128m,mode=1777', args)
-        self.assertEqual(['--entrypoint', '/bin/bash', IMAGE, '/tmp/runner-entrypoint.sh'], args[-4:])
+        self.assertEqual(['--entrypoint', '/bin/bash', IMAGE, '/runner-entrypoint.sh'], args[-4:])
+        mount = args[args.index('--mount') + 1]
+        self.assertTrue(mount.endswith('dst=/runner-entrypoint.sh,readonly'))
+        self.assertNotIn('dst=/tmp/', mount)
         self.assertEqual('fixture-registration\n', job['stdin'])
         self.assertFalse(any('fixture-registration' in arg for arg in args))
         self.assertEqual('10001:10001', args[args.index('--user') + 1])

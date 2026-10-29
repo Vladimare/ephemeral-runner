@@ -209,7 +209,8 @@ class Installer:
         journal.unlink()
         self.sync(journal.parent)
 
-    def instance(self, action, instance, version=None, repository=None, network=None, image=None):
+    def instance(self, action, instance, version=None, repository=None, network=None, image=None,
+                 allow_unbounded_legacy_rollback=False):
         if not re.fullmatch(INSTANCE, instance):
             raise ValueError('Invalid instance')
         with self.lock('runtime', shared=True), self.lock('instance-' + instance):
@@ -260,6 +261,11 @@ class Installer:
                     raise RuntimeError('Invalid current profile')
                 self.directory(home / 'profiles' / previous, create=False)
                 self.verify(previous)
+                if resources is None:
+                    if not allow_unbounded_legacy_rollback:
+                        raise RuntimeError('Legacy runtime has no resource enforcement; require --allow-unbounded-legacy-rollback')
+                    self.directory(home / 'profiles' / version, create=False)
+                    print('WARNING: explicit legacy rollback removes container resource enforcement; services remain stopped', file=sys.stderr)
                 if resources is not None:
                     resources.read_policy(home / 'resources.json', uid=self.uid, root=self.root)
                 if previous == version:
@@ -331,6 +337,9 @@ def main():
         command.add_argument('--instance', required=True)
         if name != 'recover':
             command.add_argument('--version', required=True)
+        if name == 'upgrade':
+            command.add_argument('--allow-unbounded-legacy-rollback', action='store_true',
+                                 help='Allow a stopped instance to return to a retained legacy profile without resource limits')
         if name == 'instance-install':
             for flag in ('repo', 'network', 'image'):
                 command.add_argument('--' + flag, required=True)

@@ -335,10 +335,37 @@ class InstallerTests(unittest.TestCase):
         policy.chmod(0o600)
         self.installer.instance('upgrade', 'a', 'v2')
         self.assertEqual(before_b, self.snapshot(self.home('b')))
-        self.installer.instance('upgrade', 'a', 'v1')
+        before = self.snapshot(self.home())
+        with self.assertRaises(RuntimeError):
+            self.installer.instance('upgrade', 'a', 'v1')
+        self.assertEqual(before, self.snapshot(self.home()))
+        self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=True)
+        self.assertIn('removes container resource enforcement', warning.getvalue())
+        self.assertEqual('profiles/v1', os.readlink(self.home() / 'current'))
         self.assertEqual(contents, policy.read_bytes())
         with self.assertRaises(RuntimeError):
             self.install('c', 'v1')
+
+    def test_new_instance_cannot_select_never_used_legacy_release_even_with_opt_in(self):
+        import json
+        release = self.installer.releases / 'v1'
+        (release / 'scripts/runner-resources.py').unlink()
+        (release / 'manifest.json').write_text(json.dumps(self.installer.manifest(release, mod.LEGACY_FILES)))
+        self.installer.runtime_install('v2')
+        self.install('a', 'v2')
+        before = self.snapshot(self.home())
+        for allow in (False, True):
+            with self.subTest(allow=allow), self.assertRaises((RuntimeError, OSError)):
+                self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=allow)
+            self.assertEqual(before, self.snapshot(self.home()))
+            self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        self.installer.run = lambda args: 'active'
+        with self.assertRaises(RuntimeError):
+            self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=True)
+        self.assertEqual(before, self.snapshot(self.home()))
 
     def test_independent_budget_files_survive_upgrade_and_other_installs(self):
         import json

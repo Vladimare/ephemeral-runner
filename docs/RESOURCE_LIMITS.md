@@ -33,7 +33,8 @@ are rejected. There are no unlimited values or implicit runtime defaults. Exampl
 
 Only the two backend/driver strings shown above are accepted. The existing
 512-process ceiling remains on the **container**, as do non-root UID/GID,
-capability drop, no-new-privileges, token on stdin and read-only entrypoint mount.
+capability drop, no-new-privileges, token on stdin and read-only entrypoint mount
+at `/runner-entrypoint.sh`, outside the `/tmp` tmpfs.
 Policy values become separate quoted Docker arguments, never shell code. Memory,
 shared memory, log size and writable-layer quota are passed as explicit byte
 counts; log-driver SI suffix parsing does not change the declared MiB units.
@@ -110,10 +111,21 @@ helper. While stopped, explicitly create `resources.json` using the complete
 example above, set root ownership/mode 0600, and invoke the documented `upgrade`
 command. Upgrade validates the policy before changing the selected profile. It
 does not silently create a policy for existing installations. Six-file releases
-from before this feature remain verifiable for explicit rollback; selecting one
-**restores that release's old unbounded semantics**. Keep such rollback stopped
-until its risk is deliberately accepted. New instances cannot select those old
-releases through the updated installer. Other instances and immutable releases
+from before this feature remain verifiable. Selecting one is rejected by default.
+Only a previously retained instance profile can be selected, and only with the
+explicit `upgrade --allow-unbounded-legacy-rollback` acknowledgment while all
+three units are stopped. A never-used legacy release is rejected even with that
+flag. The command warns that this **restores old unbounded semantics** and leaves
+services stopped. For an instance that previously used `old-v1`:
+
+```bash
+sudo ./scripts/install.sh upgrade --instance example --version old-v1 --allow-unbounded-legacy-rollback
+```
+
+Automatic recovery of a failed upgrade restores its journaled prior profile;
+this preserves failure atomicity and does not start services. Keep a legacy
+rollback stopped until its risk is deliberately accepted. New instances cannot
+select those old releases through the updated installer. Other instances and immutable releases
 remain unchanged; policy files survive upgrade/recovery/rollback.
 
 ## Failure and recovery

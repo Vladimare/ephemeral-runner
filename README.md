@@ -2,7 +2,7 @@
 
 Repository-configurable, disposable GitHub Actions runners in Linux Docker containers. Each instance targets one `OWNER/REPO`, runs at most one GitHub Actions job, then disposes its container; systemd automatically starts a fresh runner. A repository-scoped host-side cleanup removes stale registrations after shutdown or power loss.
 
-**Status:** Initial reusable implementation extracted from an operational LOOM setup. Python unit tests and shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use.
+**Status:** Reusable implementation with transactional installation, private-file validation and per-instance resource policies. Python regression tests and per-file shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use.
 
 ## Requirements
 
@@ -179,7 +179,8 @@ systemd commands and dummy credentials. They cover failure boundaries, version
 isolation, concurrency, upgrade and recovery; they do not establish production
 readiness. Linux Docker/systemd validation must still check unit loading/enabling,
 idle stop/restart, timer activation, interrupted transactions and power loss. The
-existing cleanup safety tests remain required. Resource budgets, additional
-credential hardening and broader shell CI coverage are separate follow-ups.
+existing cleanup safety tests remain required. Resource-policy and private-file
+regressions and per-file shell checks are included. Live Linux resource, systemd
+lifecycle and network validation remain deployment gates.
 
 MIT licensed. See [LICENSE](LICENSE).

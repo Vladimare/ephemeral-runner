@@ -70,6 +70,6 @@ printf '%s\n' "$TOKEN" | docker run --rm -i \
     -e RUNNER_NAME="$NAME" \
     -e RUNNER_LABELS="$RUNNER_LABEL" \
     -e RUNNER_MANUALLY_TRAP_SIG=1 \
-    --mount "type=bind,src=$ENTRYPOINT,dst=/tmp/runner-entrypoint.sh,readonly" \
+    --mount "type=bind,src=$ENTRYPOINT,dst=/runner-entrypoint.sh,readonly" \
     --entrypoint /bin/bash \
-    "$RUNNER_IMAGE" /tmp/runner-entrypoint.sh
+    "$RUNNER_IMAGE" /runner-entrypoint.sh
