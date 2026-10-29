@@ -11,9 +11,8 @@ STATE_DIR="/var/lib/ephemeral-runner/$INSTANCE"
 RUNTIME=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ENTRYPOINT="$RUNTIME/docker/entrypoint.sh"
 
-[[ -f "$CONF" && -f "$AUTH" ]] || { echo 'Missing instance configuration or auth file' >&2; exit 2; }
-[[ $(stat -c %u "$CONF") == 0 && $(stat -c %u "$AUTH") == 0 ]] || { echo 'Config must be owned by root' >&2; exit 2; }
-[[ $(stat -c %a "$CONF") == 600 && $(stat -c %a "$AUTH") == 600 ]] || { echo 'Config and auth file must have mode 0600' >&2; exit 2; }
+# Shared file, parent-directory and config validation; no Docker/API access.
+python3 "$RUNTIME/scripts/runner-cleanup.py" --instance "$INSTANCE" --validate-config
 # The installer writes only validated root-controlled simple KEY=VALUE lines.
 # These config files must never be writable by an unprivileged user.
 # shellcheck source=/dev/null

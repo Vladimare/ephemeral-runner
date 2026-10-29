@@ -15,4 +15,7 @@ jobs:
       - name: Python tests
         run: python3 -m unittest discover -s tests -v
       - name: Shell syntax checks
-        run: bash -n scripts/*.sh docker/entrypoint.sh
+        run: |
+          for file in scripts/*.sh docker/entrypoint.sh; do
+            bash -n "$file" || exit 1
+          done

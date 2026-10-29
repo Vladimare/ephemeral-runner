@@ -7,7 +7,9 @@ is read by curl from a root-only config file on the host.
 
 import argparse
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -47,10 +49,34 @@ class Config:
         return bool(re.fullmatch(re.escape(self.prefix) + r'-[0-9]+-[0-9]+', name))
 
 
-def check_private_root(path):
-    st = path.stat()
-    if st.st_uid != 0 or st.st_mode & 0o022:
-        raise RuntimeError(f'Insecure ownership/permissions: {path} (require root-owned, not group/world writable)')
+def check_private_root(path, *, uid=0, root=Path('/')):
+    """Validate each component without following links (root/uid are test seams).
+
+    Descriptors pin traversal while checking. Later Python/bash/curl reads reopen
+    the path: trusted administrators must serialize replacement with runner use.
+    """
+    parts = Path(path).relative_to(root).parts
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for index in range(len(parts)):
+            parent = os.fstat(directory)
+            if parent.st_uid != uid or parent.st_mode & 0o022:
+                raise RuntimeError('Config/auth parents must be root-owned and not group/world writable')
+            final = index == len(parts) - 1
+            flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_NONBLOCK if final else os.O_DIRECTORY)
+            child = os.open(parts[index], flags, dir_fd=directory)
+            if final:
+                try:
+                    st = os.fstat(child)
+                    if not stat.S_ISREG(st.st_mode) or st.st_uid != uid or stat.S_IMODE(st.st_mode) != 0o600:
+                        raise RuntimeError('Config/auth must be root-owned regular files with mode 0600')
+                finally:
+                    os.close(child)
+            else:
+                os.close(directory)
+                directory = child
+    finally:
+        os.close(directory)
 
 
 def load_config(instance):
@@ -229,9 +255,13 @@ def main():
     group.add_argument('--audit', action='store_true')
     group.add_argument('--sweep', action='store_true')
     group.add_argument('--current', action='store_true')
+    group.add_argument('--validate-config', action='store_true',
+                       help='Validate config/auth without contacting Docker or GitHub')
     p.add_argument('--dry-run', action='store_true')
     args = p.parse_args()
     cfg = load_config(args.instance)
+    if args.validate_config:
+        return
     command(['docker', 'info', '--format', '{{.ServerVersion}}'])
     if args.audit:
         audit(cfg)
