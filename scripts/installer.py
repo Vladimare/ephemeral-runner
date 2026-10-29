@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,9 +18,11 @@ import tempfile
 
 INSTANCE = r'[a-z][a-z0-9-]{0,19}'
 VERSION = r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}'
-FILES = ('scripts/runner-once.sh', 'scripts/runner-cleanup.py', 'docker/entrypoint.sh',
+LEGACY_FILES = ('scripts/runner-once.sh', 'scripts/runner-cleanup.py', 'docker/entrypoint.sh',
          'systemd/ephemeral-runner@.service', 'systemd/ephemeral-runner-cleanup@.service',
          'systemd/ephemeral-runner-cleanup@.timer')
+UNIT_FILES = LEGACY_FILES[3:]
+FILES = LEGACY_FILES + ('scripts/runner-resources.py',)
 
 
 class Installer:
@@ -84,8 +87,8 @@ class Installer:
         finally:
             os.close(fd)
 
-    def manifest(self, directory):
-        return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in FILES}
+    def manifest(self, directory, files=FILES):
+        return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in files}
 
     def release(self, version):
         if not re.fullmatch(VERSION, version) or version in ('.', '..'):
@@ -99,13 +102,21 @@ class Installer:
         if not path.exists():
             raise RuntimeError("Runtime is not installed; run runtime-install first")
         self.directory(path, create=False)
+        # Read only known immutable layouts, including releases predating budgets.
+        manifest_file = path / 'manifest.json'
+        info = manifest_file.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RuntimeError('Untrusted runtime manifest')
+        manifest = json.loads(manifest_file.read_text())
+        if set(manifest) not in (set(LEGACY_FILES), set(FILES)):
+            raise RuntimeError('Unsupported runtime manifest layout')
         # Verify files as well as metadata; refuse damaged or replaced releases.
-        for name in (*FILES, 'manifest.json'):
+        for name in (*manifest, 'manifest.json'):
             info = (path / name).lstat()
             expected_mode = 0o600 if name == 'manifest.json' else (0o755 if name.startswith(('scripts/', 'docker/')) else 0o644)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or stat.S_IMODE(info.st_mode) != expected_mode:
                 raise RuntimeError(f'Untrusted release file: {name}')
-        if json.loads((path / 'manifest.json').read_text()) != self.manifest(path):
+        if manifest != self.manifest(path, manifest):
             raise RuntimeError('Runtime manifest mismatch')
         return path
 
@@ -115,7 +126,7 @@ class Installer:
             expected = self.manifest(self.source)
             if target.exists() or target.is_symlink():
                 self.verify(version)
-                if expected != self.manifest(target):
+                if expected != json.loads((target / 'manifest.json').read_text()):
                     raise RuntimeError('Version already exists with different content; choose a new version')
                 return
             stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=self.releases))
@@ -159,7 +170,7 @@ class Installer:
             raise RuntimeError('Profile unexpectedly exists')
         stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=profiles))
         try:
-            for source, name in zip(FILES[3:], self.names(instance)):
+            for source, name in zip(UNIT_FILES, self.names(instance)):
                 text = (runtime / source).read_text().replace(
                     '/usr/local/libexec/ephemeral-runner/',
                     f'/usr/local/libexec/ephemeral-runner/releases/{version}/scripts/')
@@ -198,7 +209,8 @@ class Installer:
         journal.unlink()
         self.sync(journal.parent)
 
-    def instance(self, action, instance, version=None, repository=None, network=None, image=None):
+    def instance(self, action, instance, version=None, repository=None, network=None, image=None,
+                 allow_unbounded_legacy_rollback=False):
         if not re.fullmatch(INSTANCE, instance):
             raise ValueError('Invalid instance')
         with self.lock('runtime', shared=True), self.lock('instance-' + instance):
@@ -213,8 +225,16 @@ class Installer:
             if journal.exists():
                 raise RuntimeError('Interrupted transaction: run recover --instance ' + instance)
             runtime = self.verify(version)
+            helper = runtime / 'scripts/runner-resources.py'
+            resources = None
+            if 'scripts/runner-resources.py' in json.loads((runtime / 'manifest.json').read_text()):
+                spec = importlib.util.spec_from_file_location('install_resources', helper)
+                resources = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(resources)
             self.stopped(instance)
             if action == 'instance-install':
+                if resources is None:
+                    raise RuntimeError('New instances require a budget-aware runtime release')
                 if home.exists() or home.is_symlink() or any(
                     (self.base / (instance + suffix)).exists() or (self.base / (instance + suffix)).is_symlink()
                     for suffix in ('.env', '.curl.conf')):
@@ -241,6 +261,13 @@ class Installer:
                     raise RuntimeError('Invalid current profile')
                 self.directory(home / 'profiles' / previous, create=False)
                 self.verify(previous)
+                if resources is None:
+                    if not allow_unbounded_legacy_rollback:
+                        raise RuntimeError('Legacy runtime has no resource enforcement; require --allow-unbounded-legacy-rollback')
+                    self.directory(home / 'profiles' / version, create=False)
+                    print('WARNING: explicit legacy rollback removes container resource enforcement; services remain stopped', file=sys.stderr)
+                if resources is not None:
+                    resources.read_policy(home / 'resources.json', uid=self.uid, root=self.root)
                 if previous == version:
                     return
                 for name in self.names(instance):
@@ -265,13 +292,15 @@ class Installer:
                     self.checkpoint('config')
                     self.write(working / 'auth.curl.conf', '')
                     self.checkpoint('auth')
+                    self.write(working / 'resources.json', json.dumps(resources.DEFAULT, indent=2) + '\n')
+                    self.checkpoint('resources')
                 profile = working / 'profiles' / version
                 if not profile.exists():
                     self.profile(working, version, instance)
                 else:
                     # Reuse only byte-identical profiles on rollback/retry.
                     self.directory(profile, create=False)
-                    for source, name in zip(FILES[3:], self.names(instance)):
+                    for source, name in zip(UNIT_FILES, self.names(instance)):
                         expected = (runtime / source).read_text().replace('/usr/local/libexec/ephemeral-runner/', f'/usr/local/libexec/ephemeral-runner/releases/{version}/scripts/')
                         if (profile / name).is_symlink() or (profile / name).read_text() != expected:
                             raise RuntimeError('Existing profile mismatch')
@@ -308,6 +337,9 @@ def main():
         command.add_argument('--instance', required=True)
         if name != 'recover':
             command.add_argument('--version', required=True)
+        if name == 'upgrade':
+            command.add_argument('--allow-unbounded-legacy-rollback', action='store_true',
+                                 help='Allow a stopped instance to return to a retained legacy profile without resource limits')
         if name == 'instance-install':
             for flag in ('repo', 'network', 'image'):
                 command.add_argument('--' + flag, required=True)

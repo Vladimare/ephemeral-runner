@@ -95,7 +95,7 @@ class InstallerTests(unittest.TestCase):
     def test_each_instance_boundary_is_retryable_and_preserves_a(self):
         self.install()
         before = self.snapshot(self.home())
-        stages = ['config', 'auth', 'instance-publish', 'reload'] + ['unit:' + n for n in self.installer.names('b')] + ['publish:' + n for n in self.installer.names('b')]
+        stages = ['config', 'auth', 'resources', 'instance-publish', 'reload'] + ['unit:' + n for n in self.installer.names('b')] + ['publish:' + n for n in self.installer.names('b')]
         for stage in stages:
             with self.subTest(stage=stage):
                 def fail(current):
@@ -312,6 +312,74 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(0, worker.exitcode)
         self.assertEqual(['installed', 'refused'], sorted([results.get(timeout=1), results.get(timeout=1)]))
         self.installer.verify('racing')
+
+    def test_legacy_release_upgrade_requires_policy_and_preserves_other_instances(self):
+        import json
+        self.install()
+        self.install('b')
+        before_b = self.snapshot(self.home('b'))
+        release = self.installer.releases / 'v1'
+        (release / 'scripts/runner-resources.py').unlink()
+        (release / 'scripts/runner-once.sh').write_text('# legacy launcher fixture\n')
+        (release / 'manifest.json').write_text(json.dumps(self.installer.manifest(release, mod.LEGACY_FILES)))
+        self.installer.verify('v1')
+        self.installer.runtime_install('v2')
+        policy = self.home() / 'resources.json'
+        contents = policy.read_bytes()
+        policy.unlink()
+        with self.assertRaises(OSError):
+            self.installer.instance('upgrade', 'a', 'v2')
+        self.assertEqual('profiles/v1', os.readlink(self.home() / 'current'))
+        self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        policy.write_bytes(contents)
+        policy.chmod(0o600)
+        self.installer.instance('upgrade', 'a', 'v2')
+        self.assertEqual(before_b, self.snapshot(self.home('b')))
+        before = self.snapshot(self.home())
+        with self.assertRaises(RuntimeError):
+            self.installer.instance('upgrade', 'a', 'v1')
+        self.assertEqual(before, self.snapshot(self.home()))
+        self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=True)
+        self.assertIn('removes container resource enforcement', warning.getvalue())
+        self.assertEqual('profiles/v1', os.readlink(self.home() / 'current'))
+        self.assertEqual(contents, policy.read_bytes())
+        with self.assertRaises(RuntimeError):
+            self.install('c', 'v1')
+
+    def test_new_instance_cannot_select_never_used_legacy_release_even_with_opt_in(self):
+        import json
+        release = self.installer.releases / 'v1'
+        (release / 'scripts/runner-resources.py').unlink()
+        (release / 'manifest.json').write_text(json.dumps(self.installer.manifest(release, mod.LEGACY_FILES)))
+        self.installer.runtime_install('v2')
+        self.install('a', 'v2')
+        before = self.snapshot(self.home())
+        for allow in (False, True):
+            with self.subTest(allow=allow), self.assertRaises((RuntimeError, OSError)):
+                self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=allow)
+            self.assertEqual(before, self.snapshot(self.home()))
+            self.assertFalse((self.installer.base / 'transaction-a.json').exists())
+        self.installer.run = lambda args: 'active'
+        with self.assertRaises(RuntimeError):
+            self.installer.instance('upgrade', 'a', 'v1', allow_unbounded_legacy_rollback=True)
+        self.assertEqual(before, self.snapshot(self.home()))
+
+    def test_independent_budget_files_survive_upgrade_and_other_installs(self):
+        import json
+        self.install()
+        path = self.home() / 'resources.json'
+        budget = json.loads(path.read_text())
+        budget.update(memory_mib=4096, cpu_millis=2500)
+        path.write_text(json.dumps(budget))
+        before = self.snapshot(self.home())
+        self.install('b')
+        self.installer.runtime_install('v2')
+        self.installer.instance('upgrade', 'b', 'v2')
+        self.assertEqual(before, self.snapshot(self.home()))
+        self.assertEqual(2048, json.loads((self.home('b') / 'resources.json').read_text())['memory_mib'])
 
     def test_concurrent_same_instance_has_single_winner(self):
         # fork keeps the test module importable on macOS and Linux, without Docker.

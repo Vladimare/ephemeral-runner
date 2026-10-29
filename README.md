@@ -2,7 +2,7 @@
 
 Repository-configurable, disposable GitHub Actions runners in Linux Docker containers. Each instance targets one `OWNER/REPO`, runs at most one GitHub Actions job, then disposes its container; systemd automatically starts a fresh runner. A repository-scoped host-side cleanup removes stale registrations after shutdown or power loss.
 
-**Status:** Initial reusable implementation extracted from an operational LOOM setup. Python unit tests and shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use.
+**Status:** Reusable implementation with transactional installation, private-file validation and per-instance resource policies. Python regression tests and per-file shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use.
 
 ## Requirements
 
@@ -37,8 +37,9 @@ Instance installation generates a **unique label** such as `er-loom-abcdef12` in
 `/etc/ephemeral-runner/instances/loom/config.env` and an empty `auth.curl.conf`
 (both mode 0600). Each instance pins its release through its `current` profile;
 concrete systemd units retain the documented `ephemeral-runner@loom.service` and
-`ephemeral-runner-cleanup@loom.timer` names. Services remain stopped. Use another
-instance identifier and repository to provision another independent runner.
+`ephemeral-runner-cleanup@loom.timer` names. A root-only `resources.json` records
+bounded per-instance defaults (2 GiB RAM, one CPU, no swap, 4 GiB writable layer and rotated logs).
+Services remain stopped. Use another instance identifier and repository to provision another independent runner.
 Existing instances, credentials, state and legacy flat configuration are never
 overwritten. Legacy installations require a separately planned manual migration.
 
@@ -60,6 +61,8 @@ Validate restrictive permissions:
 sudo chmod 0600 /etc/ephemeral-runner/instances/loom/auth.curl.conf
 sudo chmod 0600 /etc/ephemeral-runner/instances/loom/config.env
 sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --audit
+# Verify quota/cgroup enforcement before enabling (creates a disposable probe):
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-resources.py --instance loom
 sudo systemctl enable --now ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.timer
 ```
 
@@ -70,6 +73,16 @@ runs-on: [self-hosted, Linux, X64, er-loom-abcdef12]
 ```
 
 Run a *trusted* CI job to verify registration, execution and one-shot replacement. The label is illustrative, not a fixed value.
+
+## Resource policy
+
+Read [resource limits and supported hosts](docs/RESOURCE_LIMITS.md) before enabling
+any instance. New releases require Linux cgroup v2 and overlay2 on XFS with project
+quotas; unsupported hosts fail before requesting a GitHub token. CPU, memory,
+swap, rotated logs, writable-layer and temporary-storage budgets apply to the
+Docker job container. Edit only the intended instance's private JSON policy while
+stopped; older instances require an explicit policy and versioned upgrade.
+No deployment or migration of the existing Loom runner is automatic.
 
 ## Operations
 
@@ -166,7 +179,8 @@ systemd commands and dummy credentials. They cover failure boundaries, version
 isolation, concurrency, upgrade and recovery; they do not establish production
 readiness. Linux Docker/systemd validation must still check unit loading/enabling,
 idle stop/restart, timer activation, interrupted transactions and power loss. The
-existing cleanup safety tests remain required. Resource budgets, additional
-credential hardening and broader shell CI coverage are separate follow-ups.
+existing cleanup safety tests remain required. Resource-policy and private-file
+regressions and per-file shell checks are included. Live Linux resource, systemd
+lifecycle and network validation remain deployment gates.
 
 MIT licensed. See [LICENSE](LICENSE).
