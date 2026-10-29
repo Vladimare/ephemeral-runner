@@ -14,9 +14,9 @@ spec.loader.exec_module(mod)
 
 class CleanupTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = mod.Config('loom', 'Vladimare/loom', 'er-loom-abc12345',
-                              'er-loom-abc12345', 'loom-ci', 'runner:v1')
-        self.name = 'er-loom-abc12345-1793132445-5892'
+        self.cfg = mod.Config('example', 'example/project', 'er-example-abc12345',
+                              'er-example-abc12345', 'example-ci', 'runner:v1')
+        self.name = 'er-example-abc12345-1793132445-5892'
 
     def record(self, **kwargs):
         r = {'name': self.name, 'id': 50, 'status': 'offline', 'busy': False,
@@ -31,7 +31,7 @@ class CleanupTests(unittest.TestCase):
     def test_different_repo_instance_label_not_owned(self):
         self.assertFalse(mod.owned(self.cfg, self.record(labels=[{'name': 'er-gsd-abc12345'}])))
         self.assertFalse(mod.owned(self.cfg, self.record(name='er-other-abc12345-1793132445-5892')))
-        self.assertFalse(mod.owned(self.cfg, self.record(name='er-loom-abc12345;rm -rf /')))
+        self.assertFalse(mod.owned(self.cfg, self.record(name='er-example-abc12345;rm -rf /')))
 
     def test_sweep_only_offline_idle_missing_container(self):
         rows = [self.record(), self.record(id=51, status='online'),
@@ -83,31 +83,31 @@ class CleanupTests(unittest.TestCase):
     def test_config_parses_generated_format(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / 'loom').mkdir()
-            (base / 'loom' / 'config.env').write_text(
-                'REPOSITORY=Vladimare/loom\nRUNNER_LABEL=er-loom-abc12345\n'
-                'RUNNER_PREFIX=er-loom-abc12345\nDOCKER_NETWORK=loom-ci\n'
+            (base / 'example').mkdir()
+            (base / 'example' / 'config.env').write_text(
+                'REPOSITORY=example/project\nRUNNER_LABEL=er-example-abc12345\n'
+                'RUNNER_PREFIX=er-example-abc12345\nDOCKER_NETWORK=example-ci\n'
                 'RUNNER_IMAGE=ephemeral-runner:2.338.0\n'
             )
-            (base / 'loom' / 'auth.curl.conf').write_text('header = "Authorization: Bearer TEST"\n')
+            (base / 'example' / 'auth.curl.conf').write_text('header = "Authorization: Bearer TEST"\n')
             with patch.object(mod, 'CONFIG_BASE', base), patch.object(mod, 'check_private_root'):
-                cfg = mod.load_config('loom')
-                self.assertEqual(cfg.repository, 'Vladimare/loom')
+                cfg = mod.load_config('example')
+                self.assertEqual(cfg.repository, 'example/project')
                 self.assertTrue(cfg.valid_name(self.name))
 
     def test_dangerous_instance_rejected_before_io(self):
-        for name in ('../file', 'LOOM', '', 'loom/other'):
+        for name in ('../file', 'EXAMPLE', '', 'example/other'):
             with self.assertRaises(ValueError):
                 mod.load_config(name)
 
     def test_config_rejects_extra_shell_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / 'loom').mkdir()
-            (base / 'loom' / 'config.env').write_text('REPOSITORY=$(curl.example.com)\n')
+            (base / 'example').mkdir()
+            (base / 'example' / 'config.env').write_text('REPOSITORY=$(curl.example.com)\n')
             with patch.object(mod, 'CONFIG_BASE', base), patch.object(mod, 'check_private_root'):
                 with self.assertRaises(ValueError):
-                    mod.load_config('loom')
+                    mod.load_config('example')
 
 
 if __name__ == '__main__':
