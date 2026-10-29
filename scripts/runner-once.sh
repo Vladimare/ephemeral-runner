@@ -24,6 +24,15 @@ source "$CONF"
 [[ "$DOCKER_NETWORK" != bridge && "$DOCKER_NETWORK" != host && "$DOCKER_NETWORK" != none ]] || exit 2
 [[ -n "$RUNNER_IMAGE" && "$RUNNER_IMAGE" != -* ]] || exit 2
 
+# Numeric/enum-only JSON policy; capture helper failure before any token request.
+RESOURCE_OPTIONS=$(python3 "$RUNTIME/scripts/runner-resources.py" --instance "$INSTANCE")
+RESOURCE_ARGS=()
+PIN_IMAGE=true
+while IFS= read -r option; do
+    if [[ $PIN_IMAGE == true ]]; then RUNNER_IMAGE=$option; PIN_IMAGE=false
+    else RESOURCE_ARGS+=("$option"); fi
+done <<< "$RESOURCE_OPTIONS"
+
 # Validate all required Docker configuration before requesting a GitHub token.
 [[ $(docker network inspect --format '{{.Driver}}' "$DOCKER_NETWORK") == bridge ]] || {
     echo 'Expected an existing dedicated Docker bridge network' >&2; exit 2;
@@ -56,7 +65,7 @@ printf '%s\n' "$TOKEN" | docker run --rm -i \
     --user 10001:10001 \
     --cap-drop ALL \
     --security-opt no-new-privileges:true \
-    --pids-limit 512 \
+    "${RESOURCE_ARGS[@]}" \
     -e RUNNER_URL="https://github.com/$REPOSITORY" \
     -e RUNNER_NAME="$NAME" \
     -e RUNNER_LABELS="$RUNNER_LABEL" \

@@ -48,6 +48,24 @@ class PrivateFiles(unittest.TestCase):
             f'mod.CONFIG_BASE = Path({str(self.base)!r})\n'
             f'mod.check_private_root = functools.partial(mod.check_private_root, uid=os.getuid(), root=Path({str(self.root)!r}))\n'
             'mod.main()\n')
+        (scripts / 'runner-resources.py').write_text(
+            'import functools, importlib.util, os, sys\nfrom pathlib import Path\n'
+            f'spec = importlib.util.spec_from_file_location("fixture_resources", {str(ROOT / "scripts/runner-resources.py")!r})\n'
+            'res = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(res)\n'
+            'real_cleanup = res.cleanup\n'
+            'def fixture_cleanup():\n'
+            '    mod = real_cleanup()\n'
+            f'    mod.CONFIG_BASE = Path({str(self.base)!r})\n'
+            f'    mod.check_private_root = functools.partial(mod.check_private_root, uid=os.getuid(), root=Path({str(self.root)!r}))\n'
+            '    return mod\n'
+            'res.cleanup = fixture_cleanup\n'
+            'read = res.read_policy\n'
+            f'res.read_policy = functools.partial(read, uid=os.getuid(), root=Path({str(self.root)!r}))\n'
+            'res.main()\n')
+        import json
+        from test_resources import resources
+        (self.home / 'resources.json').write_text(json.dumps(resources.DEFAULT))
+        (self.home / 'resources.json').chmod(0o600)
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.marker = self.root / 'docker-called'
