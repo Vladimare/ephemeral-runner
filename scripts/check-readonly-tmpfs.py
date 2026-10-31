@@ -14,6 +14,7 @@ spec = importlib.util.spec_from_file_location('resource_probe', Path(__file__).w
 resources = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resources)
 MIB = 1024 * 1024
+OWNERSHIP_LABEL = 'io.ephemeral-runner.readonly-proof'
 
 # Fixed, deliberately small bounds. No configurable bind mounts or host paths.
 FLAGS = ['--pull', 'never', '--read-only', '--network', 'none', '--cgroupns', 'private',
@@ -77,6 +78,22 @@ print(json.dumps(report, indent=2))
 '''
 
 
+def owned_container(run, name, nonce, image_id, expected_id=None):
+    records = json.loads(run(['docker', 'inspect', '--type', 'container', name]))
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        raise RuntimeError('Cannot verify probe identity from inspect response')
+    container = records[0]
+    identity = container.get('Id', '')
+    config = container.get('Config')
+    labels = config.get('Labels') if isinstance(config, dict) else None
+    if (not isinstance(identity, str) or not re.fullmatch(r'[0-9a-f]{64}', identity)
+            or container.get('Name') != '/' + name or container.get('Image') != image_id
+            or not isinstance(labels, dict) or labels.get(OWNERSHIP_LABEL) != nonce
+            or (expected_id is not None and identity != expected_id)):
+        raise RuntimeError('Probe ownership mismatch; refusing removal')
+    return container
+
+
 def probe(image, run=resources.command):
     info = json.loads(run(['docker', 'info', '--format', '{{json .}}']))
     if (info.get('OSType') != 'linux' or info.get('CgroupVersion') != '2'
@@ -89,11 +106,20 @@ def probe(image, run=resources.command):
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', image_id):
         raise RuntimeError('Require immutable local image ID')
     name = 'er-ro-proof-' + secrets.token_hex(12)
-    created = False
+    nonce = secrets.token_hex(16)
+    identity = None
+    failure = None
+    recovery = f'name={name} label={OWNERSHIP_LABEL}={nonce} image={image_id}'
+    # Print before create: a lost response or killed client still leaves an
+    # ownership record in the operator's captured stderr, without credentials.
+    print('Probe recovery identity: ' + recovery, file=sys.stderr, flush=True)
     try:
-        run(['docker', 'create', '--name', name, *FLAGS, '--entrypoint', 'python3', image_id, '-c', PAYLOAD])
-        created = True
-        config = json.loads(run(['docker', 'inspect', name]))[0]
+        reply = run(['docker', 'create', '--name', name, '--label', f'{OWNERSHIP_LABEL}={nonce}',
+                     *FLAGS, '--entrypoint', 'python3', image_id, '-c', PAYLOAD])
+        if not re.fullmatch(r'[0-9a-f]{64}', reply):
+            raise RuntimeError('Invalid Docker create response; ownership reconciliation required')
+        identity = reply
+        config = owned_container(run, name, nonce, image_id, identity)
         host = config['HostConfig']
         if (host.get('ReadonlyRootfs') is not True or host.get('Binds')
                 or host.get('Mounts') or host.get('VolumesFrom')
@@ -107,16 +133,34 @@ def probe(image, run=resources.command):
                     '/work': 'rw,nosuid,nodev,size=8m,nr_inodes=1024,uid=10001,gid=10001,mode=0700',
                     '/tmp': 'rw,nosuid,nodev,size=8m,nr_inodes=1024,mode=1777'}):
             raise RuntimeError('Unexpected writable mounts or ignored limits; refusing proof')
-        run(['docker', 'start', name])
-        if run(['docker', 'wait', name]) != '0':
+        run(['docker', 'start', identity])
+        if run(['docker', 'wait', identity]) != '0':
             raise RuntimeError('Primitives proof failed; inspect bounded container logs on disposable host')
-        result = json.loads(run(['docker', 'logs', name]))
+        result = json.loads(run(['docker', 'logs', identity]))
         # Return configured settings separately from observations made in-container.
         return dict(status='PRIMITIVES ONLY; NO RUNNER BACKEND ACCEPTANCE',
                     configured=dict(HostConfig=host), observed=result)
+    except BaseException as error:
+        failure = error
+        raise
     finally:
-        if created:
-            run(['docker', 'rm', '-f', '-v', name])
+        # Even a failed create may have committed remotely. Reconcile ownership
+        # in all outcomes; absence/daemon errors are deliberately unresolved.
+        cleanup_id = None
+        try:
+            owned = owned_container(run, name, nonce, image_id, identity)
+            cleanup_id = owned['Id']
+            run(['docker', 'rm', '-f', '-v', owned['Id']])
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError) as error:
+            original = f'; original failure: {type(failure).__name__}: {failure}' if failure is not None else ''
+            known_id = identity or cleanup_id
+            known = f' id={known_id}' if known_id is not None else ''
+            raise RuntimeError(
+                f'Unresolved probe cleanup: {recovery}{known}; cleanup failure: {error}{original}. '
+                f'Manual recovery: docker inspect --type container {name}; verify the exact '
+                'name, ownership label/nonce, image and known ID before removing by full ID. '
+                'If inspect is unavailable the container may exist or be absent; do not remove by name/prefix.'
+            ) from error
 
 
 def main():

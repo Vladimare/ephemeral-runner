@@ -120,11 +120,21 @@ separately from actual cgroups, mount information and ENOSPC observations. It
 also checks that the current runner registration directory is unwritable,
 illustrating compatibility failure rather than claiming a working runner.
 
-The script uses random container names and removes only its successfully created
-container; it allocates no host filesystem images, mounts or loop devices. A
-killed experiment or daemon outage can leave a small bounded container: record
-its `er-ro-proof-*` identity and remove it explicitly on the disposable host after
-inspection. This experiment is not the missing production cleanup/reboot proof.
+The script prints a random name, ownership label/nonce and expected image to
+stderr **before create**; capture that recovery record with the experiment's
+artifacts. Both success and an ambiguous create timeout trigger ownership
+reconciliation. Cleanup requires exact name, nonce, image and full container ID
+(and the returned ID, when available), then removes by immutable ID. A name
+collision or unavailable/malformed inspect response never authorizes deletion.
+Create or cleanup ambiguity exits nonzero with the original error and manual
+inspection instructions; an absent container cannot be assumed during outages.
+
+It allocates no host filesystem images, mounts or loop devices. A killed process,
+Docker outage or unresolved ownership check can leave a small bounded container.
+On the disposable host, inspect the recorded name and verify its full ID, exact
+ownership label/nonce and image against the recovery record before removing by
+full ID. Never delete by prefix/name alone or discard failed-cleanup evidence.
+This experiment is not the missing production cleanup/reboot proof.
 
 Reconsider only after all of the following have evidence:
 

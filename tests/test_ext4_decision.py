@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import subprocess
+import secrets
 from unittest.mock import patch
 
 import test_resources as support
@@ -26,10 +28,24 @@ class Docker:
                                 '/tmp': 'rw,nosuid,nodev,size=8m,nr_inodes=1024,mode=1777'})
         self.mounts = [{'Type': 'tmpfs', 'Destination': '/work'}]
         self.status = '0'
+        self.identity = secrets.token_hex(32)
+        self.name = None
+        self.labels = {}
+        self.created = False
+        self.create_timeout = False
+        self.unrelated = False
+        self.cleanup_failure = False
 
     def __call__(self, args):
         self.calls.append(args)
         stage = 'image' if args[1:3] == ['image', 'inspect'] else args[1]
+        if stage == 'create':
+            self.name = args[args.index('--name') + 1]
+            label = args[args.index('--label') + 1]
+            self.labels = dict([label.split('=', 1)])
+            if self.create_timeout:
+                self.created = True
+                raise subprocess.TimeoutExpired('docker create', 60)
         if stage == self.fail:
             raise RuntimeError('injected ' + stage)
         if stage == 'info':
@@ -39,7 +55,18 @@ class Docker:
         if stage == 'image':
             return json.dumps([self.image])
         if stage == 'inspect':
-            return json.dumps([dict(HostConfig=self.host, Mounts=self.mounts)])
+            if not self.created and not self.unrelated:
+                raise RuntimeError('container absent')
+            return json.dumps([dict(Id=self.identity, Name='/' + self.name, Image=support.IMAGE,
+                                   Config={'Labels': {} if self.unrelated else self.labels},
+                                   HostConfig=self.host, Mounts=self.mounts)])
+        if stage == 'create':
+            self.created = True
+            return self.identity
+        if stage == 'rm':
+            if self.cleanup_failure:
+                raise RuntimeError('remove transport failure')
+            self.created = False
         if stage == 'wait':
             return self.status
         if stage == 'logs':
@@ -87,7 +114,7 @@ class Ext4DecisionTests(unittest.TestCase):
         self.assertNotIn('--mount', args)
         self.assertNotIn('--volume', args)
         self.assertEqual('rm', docker.calls[-1][1])
-        self.assertEqual(args[args.index('--name') + 1], docker.calls[-1][-1])
+        self.assertEqual(docker.identity, docker.calls[-1][-1])
         compile(proof.PAYLOAD, '<component-proof-payload>', 'exec')
 
     def test_probe_rejects_image_volumes_and_writable_bind_bypass(self):
@@ -116,7 +143,7 @@ class Ext4DecisionTests(unittest.TestCase):
             docker.fail = stage
             with self.subTest(stage=stage), self.assertRaises(RuntimeError):
                 proof.probe('local:v1', docker)
-            created = stage not in ('info', 'image', 'create')
+            created = stage not in ('info', 'image', 'create', 'inspect')
             self.assertEqual(created, any(args[1] == 'rm' for args in docker.calls))
         docker = Docker()
         docker.status = '7'  # unusable path, quota assertion or cgroup mismatch in payload
@@ -147,4 +174,69 @@ class Ext4DecisionTests(unittest.TestCase):
         names = [next(args for args in model.calls if args[1] == 'create')[3] for model in models]
         self.assertEqual(2, len(set(names)))
         for name, model in zip(names, models):
-            self.assertEqual(name, model.calls[-1][-1])
+            self.assertEqual(model.identity, model.calls[-1][-1])
+            self.assertEqual(name, model.name)
+
+    def test_ambiguous_create_cleans_exact_owned_container_by_id(self):
+        docker = Docker()
+        docker.create_timeout = True
+        with self.assertRaises(subprocess.TimeoutExpired):
+            proof.probe('local:v1', docker)
+        self.assertFalse(docker.created)
+        self.assertEqual(['docker', 'rm', '-f', '-v', docker.identity], docker.calls[-1])
+
+    def test_ambiguous_create_unavailable_inspect_reports_unresolved_identity(self):
+        docker = Docker()
+        docker.create_timeout = True
+        docker.fail = 'inspect'
+        with self.assertRaisesRegex(RuntimeError, 'Unresolved probe cleanup') as caught:
+            proof.probe('local:v1', docker)
+        text = str(caught.exception)
+        self.assertIn(docker.name, text)
+        self.assertIn(proof.OWNERSHIP_LABEL + '=' + docker.labels[proof.OWNERSHIP_LABEL], text)
+        self.assertIn('TimeoutExpired', text)
+        self.assertIn('Manual recovery', text)
+        self.assertTrue(docker.created)
+        self.assertFalse(any(args[1] == 'rm' for args in docker.calls))
+
+    def test_unrelated_name_collision_never_removed(self):
+        docker = Docker()
+        docker.fail = 'create'
+        docker.unrelated = True
+        with self.assertRaisesRegex(RuntimeError, 'ownership mismatch'):
+            proof.probe('local:v1', docker)
+        self.assertFalse(any(args[1] in ('rm', 'start') for args in docker.calls))
+
+    def test_cleanup_failure_preserves_operation_error_and_recovery_details(self):
+        docker = Docker()
+        docker.create_timeout = True
+        docker.cleanup_failure = True
+        with self.assertRaises(RuntimeError) as caught:
+            proof.probe('local:v1', docker)
+        text = str(caught.exception)
+        self.assertIn('TimeoutExpired', text)
+        self.assertIn('remove transport failure', text)
+        self.assertIn(docker.identity, text)
+        self.assertIn(docker.name, text)
+        self.assertIn('Manual recovery', text)
+        self.assertTrue(docker.created)
+
+    def test_changed_identity_between_inspection_and_cleanup_is_not_removed(self):
+        docker = Docker()
+        def replace(args):
+            if args[1] == 'logs':
+                docker.identity = 'c' * 64
+            return docker(args)
+        with self.assertRaisesRegex(RuntimeError, 'ownership mismatch'):
+            proof.probe('local:v1', replace)
+        self.assertFalse(any(args[1] == 'rm' for args in docker.calls))
+
+    def test_ownership_requires_exact_name_nonce_image_and_full_id(self):
+        baseline = dict(Id='d' * 64, Name='/probe', Image=support.IMAGE,
+                        Config={'Labels': {proof.OWNERSHIP_LABEL: 'nonce'}})
+        for change in ({'Name': '/other'}, {'Image': 'sha256:' + 'e' * 64}, {'Id': 'short'},
+                       {'Config': None}, {'Config': {'Labels': None}},
+                       {'Config': {'Labels': {proof.OWNERSHIP_LABEL: 'other'}}}):
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                proof.owned_container(lambda _: json.dumps([dict(baseline, **change)]),
+                                      'probe', 'nonce', support.IMAGE)
