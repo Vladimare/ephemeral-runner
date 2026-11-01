@@ -21,8 +21,8 @@ sudo docker network create er-ci # only if not already present; NOT isolated yet
 
 sudo ./scripts/install.sh runtime-install --version v1
 sudo ./scripts/install.sh instance-install --version v1 \
-  --instance loom \
-  --repo Vladimare/loom \
+  --instance example \
+  --repo example/project \
   --network er-ci \
   --image ephemeral-runner:2.338.0
 ```
@@ -33,11 +33,11 @@ same bytes is harmless; reusing a version with different bytes is rejected. Choo
 an explicit new version for new code. Installing another instance never replaces
 shared scripts or template units used by an existing instance.
 
-Instance installation generates a **unique label** such as `er-loom-abcdef12` in
-`/etc/ephemeral-runner/instances/loom/config.env` and an empty `auth.curl.conf`
+Instance installation generates a **unique label** such as `er-example-abcdef12` in
+`/etc/ephemeral-runner/instances/example/config.env` and an empty `auth.curl.conf`
 (both mode 0600). Each instance pins its release through its `current` profile;
-concrete systemd units retain the documented `ephemeral-runner@loom.service` and
-`ephemeral-runner-cleanup@loom.timer` names. A root-only `resources.json` records
+concrete systemd units retain the documented `ephemeral-runner@example.service` and
+`ephemeral-runner-cleanup@example.timer` names. A root-only `resources.json` records
 bounded per-instance defaults (2 GiB RAM, one CPU, no swap, 4 GiB writable layer and rotated logs).
 Services remain stopped. Use another instance identifier and repository to provision another independent runner.
 Existing instances, credentials, state and legacy flat configuration are never
@@ -46,7 +46,7 @@ overwritten. Legacy installations require a separately planned manual migration.
 Fill the dedicated root-only curl config file:
 
 ```bash
-sudoedit /etc/ephemeral-runner/instances/loom/auth.curl.conf
+sudoedit /etc/ephemeral-runner/instances/example/auth.curl.conf
 ```
 
 Example file content (**replace the placeholder and never commit a real PAT**):
@@ -58,21 +58,28 @@ header = "Authorization: Bearer YOUR_FINE_GRAINED_PAT"
 Validate restrictive permissions:
 
 ```bash
-sudo chmod 0600 /etc/ephemeral-runner/instances/loom/auth.curl.conf
-sudo chmod 0600 /etc/ephemeral-runner/instances/loom/config.env
-sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --audit
+sudo chmod 0600 /etc/ephemeral-runner/instances/example/auth.curl.conf
+sudo chmod 0600 /etc/ephemeral-runner/instances/example/config.env
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --audit
 # Verify quota/cgroup enforcement before enabling (creates a disposable probe):
-sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-resources.py --instance loom
-sudo systemctl enable --now ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.timer
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-resources.py --instance example
+sudo systemctl enable --now ephemeral-runner@example.service ephemeral-runner-cleanup@example.timer
 ```
 
-Find the actual label in `/etc/ephemeral-runner/instances/loom/config.env` and route repository workflows to it:
+Find the actual label in `/etc/ephemeral-runner/instances/example/config.env` and route repository workflows to it:
 
 ```yaml
-runs-on: [self-hosted, Linux, X64, er-loom-abcdef12]
+runs-on: [self-hosted, Linux, X64, er-example-abcdef12]
 ```
 
 Run a *trusted* CI job to verify registration, execution and one-shot replacement. The label is illustrative, not a fixed value.
+
+## ext4 compatibility
+
+Issue #13 is recorded as a [production-backend NO-GO with alternatives](docs/ADR_EXT4_STORAGE.md).
+A bounded read-only/tmpfs component experiment and a separately authorized
+workflow smoke plan are provided. They do not enable ext4 support; current ext4
+hosts still fail preflight before registration. No Docker host changes are made.
 
 ## Resource policy
 
@@ -82,27 +89,27 @@ quotas; unsupported hosts fail before requesting a GitHub token. CPU, memory,
 swap, rotated logs, writable-layer and temporary-storage budgets apply to the
 Docker job container. Edit only the intended instance's private JSON policy while
 stopped; older instances require an explicit policy and versioned upgrade.
-No deployment or migration of the existing Loom runner is automatic.
+Existing deployments are never automatically migrated.
 
 ## Operations
 
 ```bash
-systemctl status ephemeral-runner@loom.service
-sudo journalctl -u ephemeral-runner@loom.service -f
-sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --audit
-sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --sweep --dry-run
-sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance loom --sweep
+systemctl status ephemeral-runner@example.service
+sudo journalctl -u ephemeral-runner@example.service -f
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --audit
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --sweep --dry-run
+sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --sweep
 
 # ONLY when the runner is Idle in GitHub:
-sudo systemctl stop ephemeral-runner@loom.service
-sudo systemctl start ephemeral-runner@loom.service
+sudo systemctl stop ephemeral-runner@example.service
+sudo systemctl start ephemeral-runner@example.service
 ```
 
 Expected idle state: `systemctl is-active` returns `active`, one `Idle` registration on GitHub. On job completion: runner unregisters itself, container is removed, systemd restarts after 15 seconds. On intentional stop: `docker stop` sends SIGTERM to the runner; the host cleanup verifies API deletion and clears state. Docker may report 143 (128 + SIGTERM), whitelisted in `SuccessExitStatus=143`; code 137 remains a failure.
 
 The cleanup timer sweeps orphan registrations after crashes and reboots, and tolerates GitHub responses that omit the `ephemeral` field. It fails closed on unknown Docker errors and preserves the current-name file if GitHub deletion cannot be confirmed.
 
-**Do not simultaneously run the old `loom-ephemeral-test.service` and a newly installed `ephemeral-runner@loom.service`** unless you explicitly intend two independent runner instances. This repository does not migrate the running LOOM host configuration automatically.
+**Do not run a previous deployment and a newly installed instance simultaneously** unless two independent runners are intended. This repository never migrates existing host services automatically.
 
 ## Upgrade / revoke
 
@@ -113,12 +120,12 @@ same command. Configuration, PAT, image selection, labels and state remain intac
 ```bash
 sudo ./scripts/install.sh runtime-install --version v2
 # Only after verifying GitHub reports Idle; stopping a busy runner cancels its job:
-sudo systemctl stop ephemeral-runner-cleanup@loom.timer ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.service
-sudo ./scripts/install.sh upgrade --instance loom --version v2
+sudo systemctl stop ephemeral-runner-cleanup@example.timer ephemeral-runner@example.service ephemeral-runner-cleanup@example.service
+sudo ./scripts/install.sh upgrade --instance example --version v2
 # Roll back while still stopped, if needed:
-sudo ./scripts/install.sh upgrade --instance loom --version v1
+sudo ./scripts/install.sh upgrade --instance example --version v1
 # Explicit operator action, after verification:
-sudo systemctl start ephemeral-runner@loom.service ephemeral-runner-cleanup@loom.timer
+sudo systemctl start ephemeral-runner@example.service ephemeral-runner-cleanup@example.timer
 ```
 
 The installer refuses active/transitioning services or timers and fails closed on
@@ -135,11 +142,11 @@ Caught failures roll back automatically. If rollback/reload fails or a process i
 killed, stop all three units, then run:
 
 ```bash
-sudo ./scripts/install.sh recover --instance loom
+sudo ./scripts/install.sh recover --instance example
 ```
 
 Recovery restores the previous profile for an upgrade. A partial new installation
-is moved to `/etc/ephemeral-runner/instances/.recovered-loom-*`, preserving any
+is moved to `/etc/ephemeral-runner/instances/.recovered-example-*`, preserving any
 credentials/configuration for operator inspection; its managed unit links are
 removed. Retry installation only after successful recovery. Orphan `.stage-*`
 runtime/profile/instance directories and `.journal-*` files are unpublished and can be
@@ -150,7 +157,7 @@ validate on the intended Linux filesystem before production deployment.
 
 When retiring an instance, stop it when Idle, audit/sweep registrations, disable
 its service/timer and revoke its PAT. This tooling does not modify or migrate the
-deployed LOOM runner.
+existing deployed runner.
 
 ## Security
 

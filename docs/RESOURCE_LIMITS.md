@@ -147,7 +147,7 @@ CI evidence separately within a bounded retention policy.
 
 ## Opt-in disposable-host proof
 
-Not run by ordinary CI and never run on the deployed Loom host:
+Not run by ordinary CI and never run on any deployed runner host:
 
 ```bash
 sudo python3 scripts/check-resource-limits.py --disposable-host --image YOUR_LOCAL_TRUSTED_RUNNER_IMAGE

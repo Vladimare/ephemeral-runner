@@ -6,7 +6,7 @@ This project uses **Docker containers**, not virtual machines. A rootful Docker 
 
 `install.sh` requires a **pre-existing named Docker bridge network** and refuses Docker's built-in `bridge`, `host`, or `none` networks. The installer does **not** install firewall rules, because doing so without examining the host network, interface names, IPv6 and Docker networking backend can disrupt connectivity or expose services. A named bridge alone is *not* an isolation boundary: by default its containers can reach host services, RFC1918 LAN addresses and the public internet.
 
-For host `loom-ci` the production installation used host-side nftables rules restricting access to localhost/host services and private network ranges, while allowing outbound public HTTPS for GitHub and package downloads. Do not copy `172.20.0.0/16`, `br-loom-ci`, or host-specific addresses to another machine without checking them.
+Configure host-side firewall rules for your own bridge and addresses. Example subnet and interface names are illustrative; do not reuse host-specific network settings without checking the intended host.
 
 On a new host, verify and configure **both INPUT and FORWARD paths** (as appropriate for the local firewall implementation), including IPv6 if enabled. A generic policy for a dedicated runner bridge is:
 
