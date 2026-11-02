@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "kind": "sanitized-local-verification-report",
+  "baseline": "3c944324c750c1db439380690c4f6889841579fb",
+  "decision": "NO-GO for production; disposable-Linux validation pending",
+  "environment": {"os": "macOS", "python": "3.14.7"},
+  "configured_experiment": {"backing_bytes": 67108864, "requested_inodes": 1024, "maximum_observed_inodes": 2048},
+  "local": {
+    "python_suite": {"status": "PASS", "command": "python3 -m unittest discover -s tests", "tests": 86, "new_poc_tests": 21},
+    "bash_syntax": {"status": "PASS", "command": "for file in scripts/*.sh docker/entrypoint.sh; do bash -n \"$file\" || exit 1; done"},
+    "ungated_cli": {"status": "PASS", "exit_code": 1, "stderr": "Require --disposable-host and root on disposable Linux; no setup attempted"},
+    "fault_injection": {"status": "PASS", "evidence_type": "mocked OS/Docker responses and temporary files; real local flock calls", "cases": ["allocation ENOSPC", "format", "attach", "mount", "create/start/wait", "unmount busy", "detach", "unlink", "daemon unavailable", "create-then-timeout", "backing/loop/mount/container identity changes", "unsafe parent and symlink", "conflicting name and ID reuse", "interrupted lifecycle intent", "repeated recovery", "independent instance locks"]}
+  },
+  "disposable_linux": {
+    "status": "NOT RUN",
+    "reason": "No disposable Linux Docker host was provided or used; local host is macOS.",
+    "byte_enospc": "NOT RUN",
+    "inode_enospc": "NOT RUN",
+    "backing_allocation_and_fixed_size": "NOT RUN",
+    "docker_isolation_and_layout": "NOT RUN",
+    "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
+    "two_overlapping_probes": "NOT RUN",
+    "evidence": {"mountinfo": null, "statfs": null, "backing_properties": null, "loop_identity": null, "docker_inspect": null, "cgroup_values": null}
+  },
+  "github_registration": {"status": "SKIP", "reason": "Forbidden for this PoC; no credentials or registration calls used."},
+  "deployment": {"status": "SKIP", "reason": "Deployed Docker host and Loom runner are outside scope and untouched."},
+  "independent_architecture_security_review": {"status": "NOT RUN", "required_before_merge": true}
+}
