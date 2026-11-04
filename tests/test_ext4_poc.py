@@ -1,5 +1,6 @@
 """Mocked control-plane/fault tests. No Docker, loop, mount or Linux proof here."""
 import copy
+import inspect
 import importlib.util
 import json
 import os
@@ -121,6 +122,10 @@ class PolicyTests(unittest.TestCase):
         mounts_with_escape = dict(mounts, **{'/escape': ({'rw'}, 'xfs')})
         with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /escape'):
             poc.enforce_mount_policy(mounts_with_escape, lambda path: False)
+
+    def test_payload_uses_shared_mount_policy_source(self):
+        self.assertIn(inspect.getsource(poc.enforce_mount_policy).strip(), poc.PAYLOAD)
+        self.assertIn("enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))", poc.PAYLOAD)
 
 
 class LifecycleTests(unittest.TestCase):

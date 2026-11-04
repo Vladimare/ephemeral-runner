@@ -3,6 +3,7 @@
 import argparse
 import errno
 import fcntl
+import inspect
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,17 @@ def enforce_mount_policy(mounts, nonroot_writable):
                 raise RuntimeError('Docker-managed file writable by non-root UID: ' + path)
             continue
         raise RuntimeError('Unapproved writable mount: ' + path + ' (' + fs + ')')
+
+
+def payload_mount_policy_source():
+    def set_literal(items):
+        return '{' + ', '.join(repr(x) for x in sorted(items)) + '}'
+    return '\n'.join([
+        f'PSEUDO_FILESYSTEMS = {set_literal(PSEUDO_FILESYSTEMS)}',
+        f'APPROVED_RW_MOUNTS = {set_literal(APPROVED_RW_MOUNTS)}',
+        f'DOCKER_MANAGED_FILES = {set_literal(DOCKER_MANAGED_FILES)}',
+        inspect.getsource(enforce_mount_policy).strip(),
+    ])
 
 
 class Experiment:
@@ -387,16 +399,8 @@ for p in ['/tmp', '/dev/shm']:
     Path(p, 'probe').write_text('bounded'); Path(p, 'probe').unlink()
 # Docker creates /dev (64 MiB) and masks /proc subtrees; inspect all ordinary
 # writable filesystem mounts, while kernel pseudo-filesystems are recorded.
-docker_managed = {'/etc/hosts','/etc/hostname','/etc/resolv.conf'}
-for p, (opts, fs) in mounts.items():
-    if 'rw' not in opts or fs in ('proc','sysfs','cgroup2','devpts','mqueue'):
-        continue
-    if p in ('/work','/tmp','/dev','/dev/shm'):
-        continue
-    if p in docker_managed:
-        assert not os.access(p, os.W_OK), ('docker-managed file writable by uid 10001', p, fs)
-        continue
-    raise AssertionError(('unapproved mount',p,fs))
+__MOUNT_POLICY_SOURCE__
+enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))
 for p in ['/', '/etc', '/var/tmp', '/home', '/opt/actions-runner']:
     try: Path(p, 'forbidden-probe').write_text('x')
     except OSError as e: assert e.errno in (errno.EROFS, errno.EACCES)
@@ -443,6 +447,7 @@ finally:
     for i in range(count): Path('/work','inode-'+str(i)).unlink()
 print(json.dumps(report))
 '''
+PAYLOAD = PAYLOAD.replace('__MOUNT_POLICY_SOURCE__', payload_mount_policy_source())
 
 
 def preflight(image, run=command):

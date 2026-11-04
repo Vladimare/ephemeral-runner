@@ -6,7 +6,7 @@
   "environment": {"os": "macOS", "python": "3.14.7"},
   "configured_experiment": {"backing_bytes": 67108864, "requested_inodes": 1024, "maximum_observed_inodes": 2048},
   "local": {
-    "python_suite": {"status": "PASS", "command": "python3 -m unittest discover -s tests", "tests": 86, "new_poc_tests": 21},
+    "python_suite": {"status": "PASS", "command": "python3 -m unittest discover -s tests", "tests": 88, "new_poc_tests": 22},
     "bash_syntax": {"status": "PASS", "command": "for file in scripts/*.sh docker/entrypoint.sh; do bash -n \"$file\" || exit 1; done"},
     "ungated_cli": {"status": "PASS", "exit_code": 1, "stderr": "Require --disposable-host and root on disposable Linux; no setup attempted"},
     "fault_injection": {"status": "PASS", "evidence_type": "mocked OS/Docker responses and temporary files; real local flock calls", "cases": ["allocation ENOSPC", "format", "attach", "mount", "create/start/wait", "unmount busy", "detach", "unlink", "daemon unavailable", "create-then-timeout", "backing/loop/mount/container identity changes", "unsafe parent and symlink", "conflicting name and ID reuse", "interrupted lifecycle intent", "repeated recovery", "independent instance locks"]}
