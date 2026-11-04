@@ -18,6 +18,9 @@ SIZE = 64 * MIB
 LABEL = 'io.ephemeral-runner.ext4-poc'
 SOCKET = 'unix:///var/run/docker.sock'
 TMPFS = '/tmp:rw,nosuid,nodev,noexec,size=8m,nr_inodes=1024,mode=1777'
+PSEUDO_FILESYSTEMS = {'proc', 'sysfs', 'cgroup2', 'devpts', 'mqueue'}
+APPROVED_RW_MOUNTS = {'/work', '/tmp', '/dev', '/dev/shm'}
+DOCKER_MANAGED_FILES = {'/etc/hosts', '/etc/hostname', '/etc/resolv.conf'}
 
 
 def command(args):
@@ -97,6 +100,20 @@ def mount_record(text, target):
     if len(matches) > 1:
         raise RuntimeError('Stacked mounts: retain evidence')
     return matches[0] if matches else None
+
+
+def enforce_mount_policy(mounts, nonroot_writable):
+    """Reject unbounded writable mounts and Docker-managed files writable by job UID."""
+    for path, (opts, fs) in mounts.items():
+        if 'rw' not in opts or fs in PSEUDO_FILESYSTEMS:
+            continue
+        if path in APPROVED_RW_MOUNTS:
+            continue
+        if path in DOCKER_MANAGED_FILES:
+            if nonroot_writable(path):
+                raise RuntimeError('Docker-managed file writable by non-root UID: ' + path)
+            continue
+        raise RuntimeError('Unapproved writable mount: ' + path + ' (' + fs + ')')
 
 
 class Experiment:
@@ -370,9 +387,16 @@ for p in ['/tmp', '/dev/shm']:
     Path(p, 'probe').write_text('bounded'); Path(p, 'probe').unlink()
 # Docker creates /dev (64 MiB) and masks /proc subtrees; inspect all ordinary
 # writable filesystem mounts, while kernel pseudo-filesystems are recorded.
+docker_managed = {'/etc/hosts','/etc/hostname','/etc/resolv.conf'}
 for p, (opts, fs) in mounts.items():
-    if 'rw' in opts and fs not in ('proc','sysfs','cgroup2','devpts','mqueue'):
-        assert p in ('/work','/tmp','/dev','/dev/shm'), ('unapproved mount',p,fs)
+    if 'rw' not in opts or fs in ('proc','sysfs','cgroup2','devpts','mqueue'):
+        continue
+    if p in ('/work','/tmp','/dev','/dev/shm'):
+        continue
+    if p in docker_managed:
+        assert not os.access(p, os.W_OK), ('docker-managed file writable by uid 10001', p, fs)
+        continue
+    raise AssertionError(('unapproved mount',p,fs))
 for p in ['/', '/etc', '/var/tmp', '/home', '/opt/actions-runner']:
     try: Path(p, 'forbidden-probe').write_text('x')
     except OSError as e: assert e.errno in (errno.EROFS, errno.EACCES)

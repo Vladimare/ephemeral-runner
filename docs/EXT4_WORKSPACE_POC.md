@@ -56,9 +56,10 @@ cgroup/host memory; the 256 MiB container cap does not reserve host memory.
 Unlike tmpfs-only storage, workspace bytes reside on disk and need not remain
 resident RAM. `/tmp` and `/dev/shm` remain separate 8 MiB tmpfs mounts; `/tmp` has
 1024 inodes. Docker's standard `/dev` tmpfs is root-owned; UID 10001 cannot create
-files there. Kernel pseudo-filesystems and Docker's read-only special files are
-recorded in mountinfo; unexpected writable ordinary filesystem mounts fail the
-probe. The script rejects image VOLUME declarations and extra binds/volumes or
+files there. Kernel pseudo-filesystems are recorded in mountinfo. Docker-managed
+`/etc/hosts`, `/etc/hostname` and `/etc/resolv.conf` are explicitly allowed only
+when UID 10001 has no write access; any other writable ordinary filesystem mount
+fails the probe. The script rejects image VOLUME declarations and extra binds/volumes or
 devices, checks Docker inspect before start, and verifies actual cgroups and
 mountinfo in the container. RAM/no-swap, CPU, PID and rotating log limits remain
 mandatory. Network is disabled; no image pulls or GitHub API requests occur.

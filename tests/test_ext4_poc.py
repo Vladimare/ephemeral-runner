@@ -105,6 +105,23 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): poc.preflight('mutable:latest',run)
         with self.assertRaises(OSError): poc.preflight(IMAGE,lambda args: (_ for _ in ()).throw(OSError('offline')))
 
+    def test_mount_policy_handles_docker_managed_files_and_rejects_escape(self):
+        mounts = {
+            '/': ({'ro'}, 'overlay'),
+            '/work': ({'rw', 'nosuid', 'nodev'}, 'ext4'),
+            '/tmp': ({'rw', 'nosuid', 'nodev'}, 'tmpfs'),
+            '/dev/shm': ({'rw', 'nosuid', 'nodev'}, 'tmpfs'),
+            '/etc/hosts': ({'rw'}, 'xfs'),
+            '/etc/hostname': ({'rw'}, 'xfs'),
+            '/etc/resolv.conf': ({'rw'}, 'xfs'),
+        }
+        poc.enforce_mount_policy(mounts, lambda path: False)
+        with self.assertRaisesRegex(RuntimeError, 'Docker-managed file writable'):
+            poc.enforce_mount_policy(mounts, lambda path: path == '/etc/hosts')
+        mounts_with_escape = dict(mounts, **{'/escape': ({'rw'}, 'xfs')})
+        with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /escape'):
+            poc.enforce_mount_policy(mounts_with_escape, lambda path: False)
+
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
