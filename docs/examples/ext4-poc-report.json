@@ -3,26 +3,99 @@
   "kind": "sanitized-local-verification-report",
   "baseline": "3c944324c750c1db439380690c4f6889841579fb",
   "decision": "NO-GO for production; disposable-Linux validation pending",
-  "environment": {"os": "macOS", "python": "3.14.7"},
-  "configured_experiment": {"backing_bytes": 67108864, "requested_inodes": 1024, "maximum_observed_inodes": 2048},
+  "environment": {
+    "os": "macOS",
+    "python": "3.14.7"
+  },
+  "configured_experiment": {
+    "backing_bytes": 67108864,
+    "requested_inodes": 1024,
+    "maximum_observed_inodes": 2048
+  },
   "local": {
-    "python_suite": {"status": "PASS", "command": "python3 -m unittest discover -s tests", "tests": 88, "new_poc_tests": 22},
-    "bash_syntax": {"status": "PASS", "command": "for file in scripts/*.sh docker/entrypoint.sh; do bash -n \"$file\" || exit 1; done"},
-    "ungated_cli": {"status": "PASS", "exit_code": 1, "stderr": "Require --disposable-host and root on disposable Linux; no setup attempted"},
-    "fault_injection": {"status": "PASS", "evidence_type": "mocked OS/Docker responses and temporary files; real local flock calls", "cases": ["allocation ENOSPC", "format", "attach", "mount", "create/start/wait", "unmount busy", "detach", "unlink", "daemon unavailable", "create-then-timeout", "backing/loop/mount/container identity changes", "unsafe parent and symlink", "conflicting name and ID reuse", "interrupted lifecycle intent", "repeated recovery", "independent instance locks"]}
+    "python_suite": {
+      "status": "PASS",
+      "command": "python3 -m unittest discover -s tests",
+      "tests": 105,
+      "new_poc_tests": 23,
+      "live_harness_tests": 17
+    },
+    "bash_syntax": {
+      "status": "PASS",
+      "command": "for file in scripts/*.sh docker/entrypoint.sh; do bash -n \"$file\" || exit 1; done"
+    },
+    "ungated_cli": {
+      "status": "PASS",
+      "exit_code": 1,
+      "stderr": "Require --disposable-host and root on disposable Linux; no setup attempted"
+    },
+    "fault_injection": {
+      "status": "PASS",
+      "evidence_type": "mocked OS/Docker responses and temporary files; real local flock calls",
+      "cases": [
+        "allocation ENOSPC",
+        "format",
+        "attach",
+        "mount",
+        "create/start/wait",
+        "unmount busy",
+        "detach",
+        "unlink",
+        "daemon unavailable",
+        "create-then-timeout",
+        "backing/loop/mount/container identity changes",
+        "unsafe parent and symlink",
+        "conflicting name and ID reuse",
+        "interrupted lifecycle intent",
+        "repeated recovery",
+        "independent instance locks"
+      ]
+    },
+    "workflow_lint": {
+      "status": "PASS",
+      "command": "actionlint -shellcheck= .github/workflows/ext4-live-proof.yml",
+      "version": "1.7.7",
+      "scope": "static YAML/expression validation only; no live workflow run; ShellCheck not installed"
+    }
   },
   "disposable_linux": {
     "status": "NOT RUN",
-    "reason": "No disposable Linux Docker host was provided or used; local host is macOS.",
+    "reason": "Opt-in hosted workflow implemented; no ext4-live-proof label applied or privileged run executed. Awaiting workflow review and maintainer opt-in.",
     "byte_enospc": "NOT RUN",
     "inode_enospc": "NOT RUN",
     "backing_allocation_and_fixed_size": "NOT RUN",
     "docker_isolation_and_layout": "NOT RUN",
     "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
     "two_overlapping_probes": "NOT RUN",
-    "evidence": {"mountinfo": null, "statfs": null, "backing_properties": null, "loop_identity": null, "docker_inspect": null, "cgroup_values": null}
+    "evidence": {
+      "mountinfo": null,
+      "statfs": null,
+      "backing_properties": null,
+      "loop_identity": null,
+      "docker_inspect": null,
+      "cgroup_values": null
+    },
+    "opt_in_workflow": {
+      "status": "NOT RUN",
+      "path": ".github/workflows/ext4-live-proof.yml",
+      "pr": 16,
+      "label": "ext4-live-proof",
+      "head_source": "same-repository event pull_request.head.sha",
+      "runner": "ubuntu-24.04",
+      "run_url": null,
+      "artifact": null
+    }
   },
-  "github_registration": {"status": "SKIP", "reason": "Forbidden for this PoC; no credentials or registration calls used."},
-  "deployment": {"status": "SKIP", "reason": "Deployed Docker host and Loom runner are outside scope and untouched."},
-  "independent_architecture_security_review": {"status": "NOT RUN", "required_before_merge": true}
+  "github_registration": {
+    "status": "SKIP",
+    "reason": "Forbidden for this PoC; no credentials or registration calls used."
+  },
+  "deployment": {
+    "status": "SKIP",
+    "reason": "Existing deployed runners and Docker hosts remain outside scope and untouched."
+  },
+  "independent_architecture_security_review": {
+    "status": "NOT RUN",
+    "required_before_merge": true
+  }
 }

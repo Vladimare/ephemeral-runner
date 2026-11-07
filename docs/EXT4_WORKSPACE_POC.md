@@ -40,7 +40,7 @@ Mounts are scoped by the private directory and exact owned block-device identity
 in the disposable host namespace. They are intentionally visible to the local
 Docker daemon so it can bind the mount. A private unshared mount namespace would
 hide the source filesystem from that daemon. This is one reason the script must
-never run on Loom/Manjaro or a shared deployment host.
+never run on an existing or shared deployment host.
 
 Admission is serialized with a root-owned lock through allocation/setup and
 cleanup. Independent probes can overlap after setup; each has its own random
@@ -83,7 +83,7 @@ The 64 MiB component proof must not be presented as a working GitHub runner.
 
 ## Manual invocation — ONLY a fresh disposable Linux VM
 
-Never run these commands against the deployed Docker host or Loom runner. Use a
+Never run these commands against any deployed Docker host or runner. Use a
 VM with no credentials, repositories or workloads, local rootful Docker, ext4
 scratch storage, util-linux, e2fsprogs, Python 3 and a trusted locally loaded
 runner image. Do not change the daemon driver/data-root or restart Docker.
@@ -163,3 +163,14 @@ remains the alternative described in the ADR. Full runner copying/registration,
 recurring systemd lifecycle, aggregate capacity scheduling and real one-job E2E
 need separate work/authorization. Independent architecture/security review is
 required before merge; do not auto-merge, release or deploy this prototype.
+
+## Opt-in GitHub-hosted validation (issue #17)
+
+The dormant [live workflow guide](EXT4_LIVE_VALIDATION.md) describes exact label,
+source/head, permission, VM and artifact gates. It runs only after independent
+workflow review and a maintainer manually adding `ext4-live-proof` to PR #16.
+No opt-in label was applied while implementing this tooling. The checked-out
+label-event head is frozen, and normal pushes do not execute privileged tests.
+The repository example remains **NOT RUN** until actual sanitized artifacts exist.
+The guide includes a separate QEMU fallback if hosted ext4/loop prerequisites
+produce SKIP/NO-GO. Do not change a shared Docker host to make the proof pass.
