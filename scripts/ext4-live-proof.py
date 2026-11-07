@@ -202,13 +202,31 @@ def build_images(workspace, base, record, run=command, checkpoint=lambda: None):
 
 
 def locate_attempt(base, attempt):
-    text = (base / (attempt['key'] + '.stderr')).read_text()
-    matches = re.findall(r'^Recovery journal: (.+/journal.json)$', text, re.M)
-    if len(set(matches)) != 1:
+    candidate_paths = []
+    try:
+        text = (base / (attempt['key'] + '.stderr')).read_text()
+    except OSError:
+        text = ''
+    for match in re.findall(r'^Recovery journal: (.+/journal.json)$', text, re.M):
+        candidate_paths.append(Path(match))
+    if not candidate_paths:
+        candidate_paths = [
+            path for path in sorted(base.glob('probe-*/journal.json'))
+            if path.parent.parent == base and re.fullmatch(r'probe-[a-f0-9]{32}', path.parent.name)
+        ]
+    unique = []
+    seen = set()
+    for journal in candidate_paths:
+        if journal.parent.parent != base or not re.fullmatch(r'probe-[a-f0-9]{32}', journal.parent.name):
+            continue
+        key = str(journal)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(journal)
+    if len(unique) != 1:
         raise RuntimeError('Missing or ambiguous exact recovery journal; retained state unresolved')
-    journal = Path(matches[0])
-    if journal.parent.parent != base or not re.fullmatch(r'probe-[a-f0-9]{32}', journal.parent.name):
-        raise RuntimeError('Recovery path outside exact owned scratch parent')
+    journal = unique[0]
     info = journal.parent.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
         raise RuntimeError('Untrusted probe directory')

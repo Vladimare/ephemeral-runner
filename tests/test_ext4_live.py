@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -189,6 +190,23 @@ class LiveValidationTests(unittest.TestCase):
             with self.assertRaises(live.Skip): live.prerequisites(Path('/unused'), fake, record)
         self.assertEqual('overlay rw', record['scratch_findmnt'])
         self.assertIn('losetup', record['tools'])
+
+    def test_locate_attempt_falls_back_to_owned_journal_when_stderr_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            nonce = 'a' * 32
+            directory = base / ('probe-' + nonce)
+            directory.mkdir(mode=0o700)
+            journal = directory / 'journal.json'
+            real = directory.lstat()
+            state = dict(directory=str(directory), directory_identity=[real.st_dev, real.st_ino],
+                         nonce=nonce, name='er-ext4-' + nonce)
+            journal.write_text(json.dumps(state))
+            (base / 'serial.stderr').write_text('')
+            patched = SimpleNamespace(st_mode=real.st_mode, st_uid=0, st_dev=real.st_dev, st_ino=real.st_ino)
+            with patch.object(live, 'private_json', return_value=state), \
+                    patch.object(Path, 'lstat', return_value=patched):
+                self.assertEqual(state, live.locate_attempt(base, {'key': 'serial'}))
 
     def test_collect_rejects_unknown_paths_and_preserves_unresolved_attempt(self):
         with tempfile.TemporaryDirectory() as tmp:
