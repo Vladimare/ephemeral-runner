@@ -1,0 +1,71 @@
+name: Opt-in disposable ext4 proof
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ext4-live-proof-pr16
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ext4-live-proof' &&
+      github.repository == 'Vladimare/ephemeral-runner' &&
+      github.event.pull_request.number == 16 &&
+      github.event.pull_request.head.repo.full_name == 'Vladimare/ephemeral-runner' &&
+      github.event.pull_request.head.ref == 'codex/issue-15-ext4-workspace-poc' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PROOF_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact reviewed event head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check exact head and run guarded hosted-VM harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROOF_HEAD_SHA"
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
+            PROOF_HEAD_SHA="$PROOF_HEAD_SHA" ImageOS="$ImageOS" ImageVersion="${ImageVersion:-unknown}" \
+            python3 scripts/ext4-live-proof.py --run
+      - name: Retain sanitized evidence even after failure
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
+            PROOF_HEAD_SHA="$PROOF_HEAD_SHA" ImageOS="$ImageOS" ImageVersion="${ImageVersion:-unknown}" \
+            python3 scripts/ext4-live-proof.py --collect > "$RUNNER_TEMP/ext4-live-evidence.json"
+      - name: Upload sanitized report (never raw disks or workspace)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ext4-live-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ext4-live-evidence.json
+          retention-days: 7
+          if-no-files-found: error
