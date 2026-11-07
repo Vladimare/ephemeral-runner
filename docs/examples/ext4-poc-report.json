@@ -16,9 +16,9 @@
     "python_suite": {
       "status": "PASS",
       "command": "python3 -m unittest discover -s tests",
-      "tests": 105,
+      "tests": 108,
       "new_poc_tests": 23,
-      "live_harness_tests": 17
+      "live_harness_tests": 20
     },
     "bash_syntax": {
       "status": "PASS",

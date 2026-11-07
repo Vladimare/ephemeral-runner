@@ -270,6 +270,7 @@ class LiveValidationTests(unittest.TestCase):
             report = {'attempts': [], 'container_overlap': 'NOT RUN'}
             with patch.object(live.subprocess, 'Popen', side_effect=lambda *a, **kw: Process()) as popen, \
                     patch.object(live, 'observe', return_value=sample), \
+                    patch.object(live, 'verify_cleanup'), \
                     patch.object(live, 'locate_attempt', return_value=self.successful_state()), \
                     patch.object(live.time, 'sleep'):
                 live.probe_group(Path(tmp), ROOT, support.IMAGE, ['parallel-a', 'parallel-b'], report, support.poc)
@@ -304,3 +305,72 @@ class LiveValidationTests(unittest.TestCase):
                 patch.object(live.os, 'stat', return_value=SimpleNamespace(st_rdev=os.makedev(7, 7))):
             with self.assertRaises(RuntimeError):
                 live.observe(Path('/unused'), {'key': 'serial'}, support.IMAGE, lambda _: json.dumps(entries))
+
+    def test_successful_probes_without_witnessed_overlap_fail_overall(self):
+        for overlap, expected in [('NOT RUN', 1), ('PASS', 0)]:
+            with self.subTest(overlap=overlap), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp) / 'new'
+                def probes(base, workspace, image, keys, report, poc):
+                    report['attempts'].extend({'key': k, 'status': 'PASS'} for k in keys)
+                    report['container_overlap'] = overlap
+                with patch.object(live.Path, 'lstat', return_value=SimpleNamespace(st_mode=0o40700, st_uid=0)), \
+                        patch.object(live, 'prerequisites'), patch.object(live, 'build_images', return_value=support.IMAGE), \
+                        patch.object(live, 'probe_group', side_effect=probes), patch.object(live, 'failure_probe'), patch('sys.stdout'):
+                    result = live.execute(environment(), ROOT, base, SimpleNamespace(private_directory=lambda _: None))
+                self.assertEqual(expected, result)
+                report = json.loads((base / 'harness.json').read_text())
+                self.assertEqual('PASS' if expected == 0 else 'FAIL', report['status'])
+                self.assertTrue(all(a['status'] == 'PASS' for a in report['attempts']))
+
+    def test_independent_cleanup_absence_lingering_and_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            state = self.successful_state()
+            state.update(directory=str(directory), backing_identity=[os.makedev(8, 1), 42], loop_rdev=os.makedev(7, 7))
+            attempt = {'observations': [{'loop': {'loopdevices': [{'name': '/dev/loop7'}]}}]}
+            unrelated_container = {'ID': 'f' * 64, 'Names': 'unrelated'}
+            unrelated_loop = {'name': '/dev/loop8', 'back-file': '/unrelated/disk.img',
+                              'back-ino': 43, 'back-maj:min': '8:1'}
+            cases = ['absent', 'container-id', 'container-name', 'loop-name', 'loop-inode',
+                     'loop-path', 'mount-target', 'mount-device', 'backing', 'daemon-unavailable']
+            for case in cases:
+                with self.subTest(case=case):
+                    backing = directory / 'disk.img'
+                    if case == 'backing': backing.touch()
+                    containers = [dict(unrelated_container)]
+                    loops = [dict(unrelated_loop)]
+                    mount = '99 1 7:8 / /unrelated rw - ext4 /dev/loop8 rw'
+                    if case == 'container-id': containers[0]['ID'] = state['evidence']['docker_inspect']['Id']
+                    if case == 'container-name': containers[0]['Names'] = state['name']
+                    if case == 'loop-name': loops[0]['name'] = '/dev/loop7'
+                    if case == 'loop-inode': loops[0]['back-ino'] = 42
+                    if case == 'loop-path': loops[0]['back-file'] = str(backing)
+                    if case == 'mount-target': mount = f'99 1 7:8 / {directory}/mnt rw - ext4 /dev/loop8 rw'
+                    if case == 'mount-device': mount = '99 1 7:7 / /elsewhere rw - ext4 /dev/loop7 rw'
+                    def run(args):
+                        if args[0] == 'docker':
+                            if case == 'daemon-unavailable': raise RuntimeError('daemon unavailable')
+                            return '\n'.join(json.dumps(c) for c in containers)
+                        return json.dumps({'loopdevices': loops})
+                    proof = {}
+                    with patch.object(live.Path, 'read_text', return_value=mount):
+                        if case == 'absent':
+                            live.verify_cleanup(state, attempt, proof, run)
+                            self.assertEqual('PASS', proof['status'])
+                            self.assertEqual([], proof['container']['matches'])
+                        else:
+                            with self.assertRaises(RuntimeError): live.verify_cleanup(state, attempt, proof, run)
+                            self.assertNotEqual('PASS', proof['status'])
+                    if backing.exists(): backing.unlink()
+
+    def test_cleanup_query_timeout_fails_attempt_despite_poc_pass(self):
+        process = SimpleNamespace(poll=lambda: 0, wait=lambda: 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = {'attempts': []}
+            with patch.object(live.subprocess, 'Popen', return_value=process), \
+                    patch.object(live, 'locate_attempt', return_value=self.successful_state()), \
+                    patch.object(live, 'verify_cleanup', side_effect=subprocess.TimeoutExpired('docker', 120)):
+                with self.assertRaises(RuntimeError):
+                    live.probe_group(Path(tmp), ROOT, support.IMAGE, ['serial'], report, support.poc)
+            self.assertEqual('FAIL', report['attempts'][0]['status'])
+            self.assertIn('timed out', report['attempts'][0]['reason'])

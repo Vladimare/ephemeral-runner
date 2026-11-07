@@ -63,12 +63,19 @@ reviewed report to PR #16 themselves.
    only when two owned containers are observed Running without restarts and both
    start times precede the earliest inspect request in that poll; otherwise
    leave overlap NOT RUN (attempted but unobserved), even if all probes succeed.
+   Overall PASS requires witnessed overlap; otherwise the result is FAIL/NO-GO
+   while retaining individual probe results.
 4. Reject a deliberately invalid image through the actual CLI. Require its
    nonzero pre-setup failure and unchanged scratch entries. This is the first
    non-destructive failure test, not a crash/reboot/drain test.
 5. Validate genuine byte and inode ENOSPC, bounded statfs/backing allocation,
    identity/isolation settings, actual cgroups, mountinfo and successful exact
-   cleanup. Missing evidence/nonzero PoC/cleanup gives FAIL. Root read-only write
+   cleanup. Independently query a successful full Docker container listing, the
+   live loop map, host mountinfo and exact backing path after each successful
+   attempt. Record exact container ID/name, loop/backing identity and mount
+   target/device absence in `cleanup_proof`. Lingering or reused resources fail;
+   unavailable observations remain UNRESOLVED and fail the attempt. These checks
+   never remove resources. Missing evidence/nonzero PoC/cleanup gives FAIL. Root read-only write
    checks and offline layout are assertions in the actual payload; they do not
    prove registration or a runnable job layout.
 

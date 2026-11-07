@@ -293,6 +293,59 @@ def validate_result(state, image, poc):
     return 'PASS'
 
 
+def verify_cleanup(state, attempt, proof, run=command):
+    """Independent read-only host queries; errors never establish absence."""
+    proof.update(status='UNRESOLVED', checked_at=time.time())
+    directory = Path(state['directory'])
+    backing = directory / 'disk.img'
+    owned_id = state['evidence']['docker_inspect']['Id']
+    if not re.fullmatch(r'[a-f0-9]{64}', owned_id):
+        raise RuntimeError('Missing exact container identity for cleanup proof')
+    containers = [json.loads(line) for line in run(
+        ['docker', 'ps', '--all', '--no-trunc', '--format', '{{json .}}']).splitlines() if line]
+    if any(not isinstance(c.get('ID'), str) or not re.fullmatch(r'[a-f0-9]{64}', c['ID'])
+           or not isinstance(c.get('Names'), str) for c in containers):
+        raise RuntimeError('Malformed Docker absence listing')
+    matches = [c for c in containers if c['ID'] == owned_id
+               or state['name'] in c['Names'].split(',')]
+    proof['container'] = dict(id=owned_id, name=state['name'], matches=matches)
+    loops = json.loads(run(['losetup', '--json', '--list', '--output',
+                           'NAME,BACK-FILE,BACK-INO,BACK-MAJ:MIN,OFFSET,SIZELIMIT']))['loopdevices']
+    dev, ino = state['backing_identity']
+    device = f'{os.major(dev)}:{os.minor(dev)}'
+    observed_names = {entry['name'] for sample in attempt['observations']
+                      for entry in sample.get('loop', {}).get('loopdevices', [])}
+    if not observed_names:
+        raise RuntimeError('Missing observed loop identity for cleanup proof')
+    loop_matches = [entry for entry in loops if entry['name'] in observed_names
+                    or entry.get('back-file') == str(backing)
+                    or (int(entry.get('back-ino', -1)) == ino and entry.get('back-maj:min') == device)]
+    proof['loops'] = dict(observed_names=sorted(observed_names), matches=loop_matches)
+    loop_dev = state['loop_rdev']
+    mount_device = f'{os.major(loop_dev)}:{os.minor(loop_dev)}'
+    mount_matches = []
+    mountinfo = Path('/proc/self/mountinfo').read_text()
+    if not mountinfo.strip():
+        raise RuntimeError('Empty mount table cannot establish cleanup')
+    for line in mountinfo.splitlines():
+        left, right = line.split(' - ', 1)
+        fields = left.split()
+        if fields[4] == str(directory / 'mnt') or fields[2] == mount_device:
+            mount_matches.append(line)
+    proof['mounts'] = dict(target=str(directory / 'mnt'), device=mount_device, matches=mount_matches)
+    try:
+        st = backing.lstat()  # includes dangling symlinks; permission errors remain unresolved
+        proof['backing'] = dict(path=str(backing), absent=False, device=st.st_dev, inode=st.st_ino)
+    except FileNotFoundError:
+        # The retained probe directory must still exist; a missing parent is ambiguous.
+        directory.lstat()
+        proof['backing'] = dict(path=str(backing), absent=True)
+    if matches or loop_matches or mount_matches or not proof['backing']['absent']:
+        proof['status'] = 'FAIL'
+        raise RuntimeError('Independent cleanup check found lingering or reused resources; retain evidence')
+    proof['status'] = 'PASS'
+
+
 def probe_group(base, workspace, image, keys, report, poc):
     active = []
     for key in keys:
@@ -332,9 +385,10 @@ def probe_group(base, workspace, image, keys, report, poc):
             if attempt['returncode'] != 0:
                 raise RuntimeError('Actual PoC exited nonzero; retain journal')
             attempt['status'] = validate_result(state, image, poc)
+            verify_cleanup(state, attempt, attempt.setdefault('cleanup_proof', {}))
             if not any(sample.get('loop') for sample in attempt['observations']):
                 raise RuntimeError('No exact live loop observation retained; evidence incomplete')
-        except (OSError, ValueError, RuntimeError, KeyError, TypeError, IndexError) as error:
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
             attempt.update(status='FAIL', reason=redact(str(error)))
             failures.append(attempt['key'])
     write_json(base / 'harness.json', report)
@@ -427,6 +481,8 @@ def execute(env, workspace, base, poc):
         probe_group(base, workspace, image, ['serial'], report, poc)
         probe_group(base, workspace, image, ['parallel-a', 'parallel-b'], report, poc)
         failure_probe(base, workspace, report)
+        if report['container_overlap'] != 'PASS':
+            raise RuntimeError('Required container overlap was not observed; component proof incomplete/NO-GO')
         report['status'] = 'PASS'
         report['scope'] = 'Component filesystem/limits/cleanup only; independent review still required'
     except Skip as error:
