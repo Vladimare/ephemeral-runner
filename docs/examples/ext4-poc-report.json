@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "kind": "sanitized-local-verification-report",
+  "kind": "sanitized-verification-summary",
   "baseline": "3c944324c750c1db439380690c4f6889841579fb",
   "decision": "NO-GO for production; disposable-Linux validation pending",
   "environment": {
@@ -16,9 +16,9 @@
     "python_suite": {
       "status": "PASS",
       "command": "python3 -m unittest discover -s tests",
-      "tests": 108,
-      "new_poc_tests": 23,
-      "live_harness_tests": 20
+      "tests": 111,
+      "new_poc_tests": 25,
+      "live_harness_tests": 21
     },
     "bash_syntax": {
       "status": "PASS",
@@ -55,15 +55,15 @@
       "status": "PASS",
       "command": "actionlint -shellcheck= .github/workflows/ext4-live-proof.yml",
       "version": "1.7.7",
-      "scope": "static YAML/expression validation only; no live workflow run; ShellCheck not installed"
+      "scope": "static YAML/expression validation only; ShellCheck not installed; separate live attempts are recorded below"
     }
   },
   "disposable_linux": {
-    "status": "NOT RUN",
-    "reason": "Opt-in hosted workflow implemented; no ext4-live-proof label applied or privileged run executed. Awaiting workflow review and maintainer opt-in.",
+    "status": "FAIL",
+    "reason": "Maintainer analysis of downloaded artifacts reports serial setup failure: Backing size/allocation/mode changed. Discard-induced deallocation is a hypothesis pending before/after allocation facts from a reviewed new head.",
     "byte_enospc": "NOT RUN",
     "inode_enospc": "NOT RUN",
-    "backing_allocation_and_fixed_size": "NOT RUN",
+    "backing_allocation_and_fixed_size": "FAIL",
     "docker_isolation_and_layout": "NOT RUN",
     "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
     "two_overlapping_probes": "NOT RUN",
@@ -76,14 +76,53 @@
       "cgroup_values": null
     },
     "opt_in_workflow": {
-      "status": "NOT RUN",
+      "status": "FAIL",
       "path": ".github/workflows/ext4-live-proof.yml",
       "pr": 16,
       "label": "ext4-live-proof",
       "head_source": "same-repository event pull_request.head.sha",
       "runner": "ubuntu-24.04",
-      "run_url": null,
-      "artifact": null
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415965257",
+      "artifact": "ext4-live-evidence.json (downloaded and inspected by maintainer per linked comment)"
+    },
+    "serial_setup": "FAIL",
+    "cleanup": "FAIL; retained evidence per reported journal",
+    "evidence_source": {
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6718714175",
+      "scope": "Reported artifact observations from maintainer; raw artifacts were not independently downloaded during this fix."
+    },
+    "live_attempts": [
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42411625309",
+        "head_prefix": "6ba12a3",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415148790",
+        "head_prefix": "8e1a31c",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415965257",
+        "head_prefix": "8e1a31c",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      }
+    ],
+    "reported_journal": {
+      "loop": "/dev/loop0",
+      "loop_rdev": 1792,
+      "pending": null,
+      "linux_enforcement": "FAIL",
+      "cleanup": "FAIL",
+      "failure": "Backing size/allocation/mode changed",
+      "cleanup_failure": "Backing size/allocation/mode changed"
+    },
+    "fix_validation": {
+      "status": "NOT RUN",
+      "reason": "nodiscard and pre/post-format diagnostics require independent review of the new exact head, then manual removal/re-addition of the existing label. No privileged rerun triggered by this fix."
     }
   },
   "github_registration": {
@@ -95,7 +134,8 @@
     "reason": "Existing deployed runners and Docker hosts remain outside scope and untouched."
   },
   "independent_architecture_security_review": {
-    "status": "NOT RUN",
-    "required_before_merge": true
+    "status": "PENDING for allocation fix and actual live acceptance",
+    "required_before_merge": true,
+    "prior_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5814740938"
   }
 }

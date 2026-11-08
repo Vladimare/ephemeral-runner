@@ -263,5 +263,56 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(e.journal.exists())
                 self.assertEqual(e.state['pending'],{'allocate':'allocate','mkfs.ext4':'format','losetup':'attach','mount':'mount'}[fail])
 
+    def test_format_preserves_allocation_contract_and_records_diagnostics(self):
+        for deallocates in (False, True):
+            with self.subTest(deallocates=deallocates), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                formatted = False
+                def run(args):
+                    nonlocal formatted
+                    calls.append(args)
+                    if args[0] == 'mkfs.ext4':
+                        formatted = True
+                        return ''
+                    raise RuntimeError('stop before real attach')
+                e = poc.Experiment(directory, run)
+                e.state = {'evidence': {}, 'tests': {}}
+                def facts():
+                    return dict(st_size=poc.SIZE, allocated_bytes=4096 if formatted and deallocates else poc.SIZE,
+                                uid=0, mode=0o600, nlink=1, device=1, inode=2, regular=True)
+                with patch.object(poc, 'identity', return_value=[1, 2]), \
+                        patch.object(poc.os, 'posix_fallocate', create=True) as allocate, \
+                        patch.object(e, 'backing_facts', side_effect=facts):
+                    with self.assertRaisesRegex(RuntimeError, 'allocation' if deallocates else 'stop before real attach'):
+                        e.setup()
+                    allocate.assert_called_once()
+                mkfs = next(args for args in calls if args[0] == 'mkfs.ext4')
+                self.assertEqual('nodiscard,lazy_itable_init=0,lazy_journal_init=0', mkfs[mkfs.index('-E') + 1])
+                saved = json.loads(e.journal.read_text())
+                checks = saved['evidence']['backing_checks']
+                self.assertEqual(poc.SIZE, checks['pre_format']['allocated_bytes'])
+                self.assertEqual(4096 if deallocates else poc.SIZE, checks['post_format_pre_attach']['allocated_bytes'])
+                self.assertEqual(['mkfs.ext4'] if deallocates else ['mkfs.ext4', 'losetup'], [c[0] for c in calls])
+                if deallocates:
+                    self.assertEqual(['allocation'], saved['evidence']['backing_verification_failure']['failed_predicates'])
+                    self.assertEqual('format', saved['pending'])
+                    self.assertTrue(e.image.exists())
+
+    def test_backing_facts_and_each_failed_predicate_are_retained(self):
+        actual = self.e.backing_facts()
+        st = self.e.image.lstat()
+        self.assertEqual(st.st_blocks * 512, actual['allocated_bytes'])
+        self.assertEqual(st.st_ino, actual['inode'])
+        good = dict(st_size=poc.SIZE, allocated_bytes=poc.SIZE, uid=0, mode=0o600,
+                    nlink=1, device=1, inode=2, regular=True)
+        for predicate, field, value in [('regular', 'regular', False), ('uid', 'uid', 1000),
+                ('nlink', 'nlink', 2), ('identity', 'inode', 3), ('size', 'st_size', 1),
+                ('allocation', 'allocated_bytes', poc.SIZE - 1), ('mode', 'mode', 0o644)]:
+            with self.subTest(predicate=predicate), patch.object(self.e, 'backing_facts', return_value=dict(good, **{field: value})):
+                with self.assertRaisesRegex(RuntimeError, predicate):
+                    poc.Experiment.verify_backing(self.e)
+                saved = json.loads(self.e.journal.read_text())
+                self.assertEqual([predicate], saved['evidence']['backing_verification_failure']['failed_predicates'])
+
 
 if __name__=='__main__': unittest.main()

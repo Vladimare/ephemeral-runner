@@ -1,6 +1,6 @@
 # Disposable ext4 workspace experiment (issue #15)
 
-Status: **unexecuted Linux prototype; NO-GO for production**. This extends the
+Status: **Linux serial setup failed; NO-GO for production**. This extends the
 research in [issue #13](https://github.com/Vladimare/ephemeral-runner/issues/13).
 It does not change the ADR's production decision, installer, runner image,
 systemd lifecycle or `overlay2-xfs-quota` policy. It never registers a runner.
@@ -16,6 +16,11 @@ is exposed to UID 10001 at `/work`; the backing file, journal, socket and loop
 device are never exposed. No in-container mount helper or privilege is provided.
 `noexec` is intentionally absent on `/work`: runner scripts and job binaries
 eventually need execution there. This is not a sandbox against a kernel escape.
+
+Formatting explicitly disables discard (`nodiscard`) to preserve preallocation;
+pre-format and post-format/pre-attach facts record size, allocated bytes,
+UID/mode/link count and device/inode. Verification records each failed predicate
+and aborts without reallocating or weakening the allocation threshold.
 
 The filesystem's block/inode geometry enforces capacity; free-space checks are
 admission only. The workload attempts at most 66 MiB and 2050 files, requires
@@ -148,7 +153,10 @@ mount bypasses, create-timeout reconciliation and repeated recovery. Mocked
 concurrency tests exercise locks/independent identities, not simultaneous Linux
 mount or daemon behavior. See the [machine-readable report](examples/ext4-poc-report.json).
 
-Still **NOT RUN**: real byte/inode ENOSPC, actual block allocation and loop limit,
+Live serial setup failed its backing allocation guard before container creation;
+see the linked report for run URLs and attributed observations. The proposed
+`nodiscard` correction has not been run live. Still **NOT RUN**: real byte/inode
+ENOSPC, verified fixed loop limit,
 Docker read-only/limit/layout smoke, SIGTERM/SIGKILL at each boundary, daemon outage,
 busy mount, reboot recovery and two overlapping real probes. Run each in fresh
 disposable VM snapshots, preserving before/after mount/loop/container evidence.
@@ -171,6 +179,7 @@ source/head, permission, VM and artifact gates. It runs only after independent
 workflow review and a maintainer manually adding `ext4-live-proof` to PR #16.
 No opt-in label was applied while implementing this tooling. The checked-out
 label-event head is frozen, and normal pushes do not execute privileged tests.
-The repository example remains **NOT RUN** until actual sanitized artifacts exist.
+The repository summary records the reported live **FAIL** and remaining
+**NOT RUN** gates; no successful enforcement or cleanup is claimed.
 The guide includes a separate QEMU fallback if hosted ext4/loop prerequisites
 produce SKIP/NO-GO. Do not change a shared Docker host to make the proof pass.

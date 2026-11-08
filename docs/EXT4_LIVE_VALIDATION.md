@@ -1,8 +1,11 @@
 # Issue #17: opt-in GitHub-hosted Linux evidence
 
-**Tooling only; live status remains NOT RUN.** The workflow is dormant until a
+**Live serial setup failed; production remains NO-GO.** See the
+[verification summary](examples/ext4-poc-report.json) for reported run evidence. The workflow is dormant until a
 maintainer audits the exact PR #16 head and deliberately adds `ext4-live-proof`.
-No label or privileged run is applied by the implementation task. Keep PR #16
+The opt-in label is currently attached following maintainer-run attempts. This
+fix does not trigger another run; after independent review of the new exact
+head, the maintainer must remove and re-add the label. Keep PR #16
 Draft until actual artifacts have independent review. Production policy,
 registration, real CI jobs and deployment remain separate projects.
 

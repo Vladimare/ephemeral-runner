@@ -177,12 +177,29 @@ class Experiment:
         return json.loads(self.run(['losetup', '--json', '--list', '--output',
                                    'NAME,BACK-FILE,BACK-INO,BACK-MAJ:MIN,OFFSET,SIZELIMIT']))['loopdevices']
 
+    def backing_facts(self):
+        s = self.image.lstat()
+        return dict(st_size=s.st_size, allocated_bytes=s.st_blocks * 512,
+                    uid=s.st_uid, mode=stat.S_IMODE(s.st_mode), nlink=s.st_nlink,
+                    device=s.st_dev, inode=s.st_ino, regular=stat.S_ISREG(s.st_mode))
+
+    def record_backing(self, stage):
+        self.state['evidence'].setdefault('backing_checks', {})[stage] = self.backing_facts()
+        self.save()
+
     def verify_backing(self):
-        if identity(self.image) != self.state['backing_identity']:
-            raise RuntimeError('Backing identity changed')
-        s = self.image.stat()
-        if s.st_size != SIZE or s.st_blocks * 512 < SIZE or s.st_mode & 0o077:
-            raise RuntimeError('Backing size/allocation/mode changed')
+        facts = self.backing_facts()
+        checks = dict(regular=facts['regular'], uid=facts['uid'] == 0,
+                      nlink=facts['nlink'] == 1,
+                      identity=[facts['device'], facts['inode']] == self.state['backing_identity'],
+                      size=facts['st_size'] == SIZE, allocation=facts['allocated_bytes'] >= SIZE,
+                      mode=not facts['mode'] & 0o077)
+        failed = [key for key, valid in checks.items() if not valid]
+        if failed:
+            self.state['evidence']['backing_verification_failure'] = dict(
+                failed_predicates=failed, observed=facts)
+            self.save()
+            raise RuntimeError('Backing verification failed: ' + ', '.join(failed))
 
     def verify_loop(self):
         self.verify_backing()
@@ -236,10 +253,13 @@ class Experiment:
         finally:
             os.close(fd)
         self.done()
+        self.record_backing('pre_format')
         self.verify_backing()
         self.intent('format')
         self.run(['mkfs.ext4', '-q', '-F', '-m', '0', '-N', '1024', '-E',
-                  'lazy_itable_init=0,lazy_journal_init=0', str(self.image)])
+                  'nodiscard,lazy_itable_init=0,lazy_journal_init=0', str(self.image)])
+        self.record_backing('post_format_pre_attach')
+        self.verify_backing()
         self.done()
         self.intent('attach')
         loop = self.run(['losetup', '--find', '--show', '--nooverlap', '--sizelimit', str(SIZE), str(self.image)])
