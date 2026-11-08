@@ -126,6 +126,37 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /escape'):
             poc.enforce_mount_policy(mounts_with_escape, lambda path: False)
 
+    def test_exact_docker_masks_require_actual_safety_and_reject_unknowns(self):
+        null = dict(character=True, directory=False, rdev_major=1, rdev_minor=3)
+        regular = dict(character=False, directory=False, rdev_major=0, rdev_minor=0)
+        for path in poc.DOCKER_FILE_MASKS:
+            with self.subTest(path=path):
+                mounts = {path: ({'rw'}, 'tmpfs')}
+                poc.enforce_mount_policy(mounts, lambda _: True, lambda _: null)
+                poc.enforce_mount_policy(mounts, lambda _: False, lambda _: regular)
+                with self.assertRaisesRegex(RuntimeError, 'Unsafe Docker file mask'):
+                    poc.enforce_mount_policy(mounts, lambda _: True, lambda _: regular)
+                with self.assertRaises(RuntimeError):
+                    poc.enforce_mount_policy(mounts, lambda _: True,
+                                             lambda _: dict(null, rdev_minor=5))
+        for path in poc.DOCKER_DIRECTORY_MASKS:
+            directory = dict(regular, directory=True)
+            poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: False, lambda _: directory)
+            with self.assertRaises(RuntimeError):
+                poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: True, lambda _: directory)
+        for path in ('/proc/escape', '/unknown', '/proc/interrupts/escape'):
+            with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount'):
+                poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: False, lambda _: null)
+        for writable in (False, True):
+            if writable:
+                with self.assertRaisesRegex(RuntimeError, 'Docker-managed file writable'):
+                    poc.enforce_mount_policy({'/etc/hosts': ({'rw'}, 'ext4')}, lambda _: True)
+            else:
+                poc.enforce_mount_policy({'/etc/hosts': ({'rw'}, 'ext4')}, lambda _: False)
+        self.assertIn(inspect.getsource(poc.mask_facts).strip(), poc.PAYLOAD)
+        self.assertIn('DOCKER_FILE_MASKS =', poc.PAYLOAD)
+        self.assertIn('DOCKER_DIRECTORY_MASKS =', poc.PAYLOAD)
+
     def test_payload_uses_shared_mount_policy_source(self):
         self.assertIn(inspect.getsource(poc.enforce_mount_policy).strip(), poc.PAYLOAD)
         self.assertIn("enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))", poc.PAYLOAD)

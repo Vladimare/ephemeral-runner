@@ -23,6 +23,8 @@ SOCKET = 'unix:///var/run/docker.sock'
 TMPFS = '/tmp:rw,nosuid,nodev,noexec,size=8m,nr_inodes=1024,mode=1777'
 PSEUDO_FILESYSTEMS = {'proc', 'sysfs', 'cgroup2', 'devpts', 'mqueue'}
 APPROVED_RW_MOUNTS = {'/work', '/tmp', '/dev', '/dev/shm'}
+DOCKER_FILE_MASKS = {'/proc/interrupts', '/proc/kcore', '/proc/keys', '/proc/timer_list'}
+DOCKER_DIRECTORY_MASKS = {'/proc/acpi', '/proc/scsi', '/sys/firmware'}
 DOCKER_MANAGED_FILES = {'/etc/hosts', '/etc/hostname', '/etc/resolv.conf'}
 
 
@@ -147,13 +149,31 @@ def mount_record(text, target):
     return matches[0] if matches else None
 
 
-def enforce_mount_policy(mounts, nonroot_writable):
+def mask_facts(path):
+    s = os.stat(path)
+    return dict(mode=stat.S_IMODE(s.st_mode), uid=s.st_uid, gid=s.st_gid,
+                character=stat.S_ISCHR(s.st_mode), directory=stat.S_ISDIR(s.st_mode),
+                rdev_major=os.major(s.st_rdev), rdev_minor=os.minor(s.st_rdev))
+
+
+def enforce_mount_policy(mounts, nonroot_writable, inspect_mask=mask_facts):
     """Reject unbounded writable mounts and Docker-managed files writable by job UID."""
     for path, (opts, fs) in mounts.items():
         if 'rw' not in opts or fs in PSEUDO_FILESYSTEMS:
             continue
         if path in APPROVED_RW_MOUNTS:
             continue
+        if path in DOCKER_FILE_MASKS and fs == 'tmpfs':
+            facts = inspect_mask(path)
+            null_device = (facts['character'] and
+                           (facts['rdev_major'], facts['rdev_minor']) == (1, 3))
+            if not facts['directory'] and (null_device or not nonroot_writable(path)):
+                continue
+            raise RuntimeError('Unsafe Docker file mask: ' + path)
+        if path in DOCKER_DIRECTORY_MASKS and fs == 'tmpfs':
+            if inspect_mask(path)['directory'] and not nonroot_writable(path):
+                continue
+            raise RuntimeError('Unsafe Docker directory mask: ' + path)
         if path in DOCKER_MANAGED_FILES:
             if nonroot_writable(path):
                 raise RuntimeError('Docker-managed file writable by non-root UID: ' + path)
@@ -168,6 +188,9 @@ def payload_mount_policy_source():
         f'PSEUDO_FILESYSTEMS = {set_literal(PSEUDO_FILESYSTEMS)}',
         f'APPROVED_RW_MOUNTS = {set_literal(APPROVED_RW_MOUNTS)}',
         f'DOCKER_MANAGED_FILES = {set_literal(DOCKER_MANAGED_FILES)}',
+        f'DOCKER_FILE_MASKS = {set_literal(DOCKER_FILE_MASKS)}',
+        f'DOCKER_DIRECTORY_MASKS = {set_literal(DOCKER_DIRECTORY_MASKS)}',
+        inspect.getsource(mask_facts).strip(),
         inspect.getsource(enforce_mount_policy).strip(),
     ])
 
@@ -495,7 +518,7 @@ def validate_container(c, mount):
 
 
 PAYLOAD = r'''
-import errno, json, os, shutil, sys
+import errno, json, os, shutil, stat, sys
 from pathlib import Path
 def progress(phase):
     print(json.dumps({"phase": phase}), file=sys.stderr, flush=True)
@@ -521,6 +544,11 @@ for p in ['/tmp', '/dev/shm']:
 # Docker creates /dev (64 MiB) and masks /proc subtrees; inspect all ordinary
 # writable filesystem mounts, while kernel pseudo-filesystems are recorded.
 __MOUNT_POLICY_SOURCE__
+for path in sorted((DOCKER_FILE_MASKS | DOCKER_DIRECTORY_MASKS) & mounts.keys()):
+    print(json.dumps({'mask': path, 'stat': mask_facts(path),
+                      'writable': os.access(path, os.W_OK),
+                      'mountinfo': [line for line in report['mountinfo'].splitlines()
+                                    if line.split()[4] == path]}), file=sys.stderr, flush=True)
 enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))
 progress('readonly_probes')
 for p in ['/', '/etc', '/var/tmp', '/home', '/opt/actions-runner']:

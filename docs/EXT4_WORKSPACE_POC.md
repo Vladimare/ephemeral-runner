@@ -69,6 +69,16 @@ devices, checks Docker inspect before start, and verifies actual cgroups and
 mountinfo in the container. RAM/no-swap, CPU, PID and rotating log limits remain
 mandatory. Network is disabled; no image pulls or GitHub API requests occur.
 
+Known Docker mask handling uses static exact file paths (`/proc/interrupts`,
+`/proc/kcore`, `/proc/keys`, `/proc/timer_list`) and separate directory paths
+(`/proc/acpi`, `/proc/scsi`, `/sys/firmware`). Writable tmpfs file masks require
+an actual character device with rdev 1:3, or an actual non-directory unwritable
+to the job UID. Directory masks require an actual directory unwritable to that
+UID. Unknown writable mounts remain rejected; Docker's `MaskedPaths` does not
+supply authorization. Actual stat, write access and exact mountinfo are emitted
+before policy validation; observed hosted mask identity still needs a new run.
+The payload embeds the same policy, identity helper and constants tested locally.
+
 ## Offline runner layout
 
 `docker/Dockerfile.ext4-poc` derives from an already loaded trusted runner image
@@ -155,7 +165,8 @@ mount or daemon behavior. See the [machine-readable report](examples/ext4-poc-re
 
 Maintainer artifact analysis reports that allocation now passes, Docker creation
 succeeds and the serial container fails after start/wait; the exact payload cause
-is unknown. See the linked report for attributed run observations. The diagnostic
+was diagnosed in the latest reported run as a rejected Docker mask at
+`/proc/interrupts`. See the linked report for attributed run observations. The diagnostic
 fix preserves `evidence.post_wait`: exact wait reply, ownership-verified post-run
 State, and separate redacted stdout/stderr (16 KiB each, tail 100, three capture
 attempts of at most five seconds each). Empty logs are explicit diagnostic failure;
