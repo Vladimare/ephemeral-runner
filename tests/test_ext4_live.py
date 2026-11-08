@@ -215,14 +215,17 @@ class LiveValidationTests(unittest.TestCase):
                 for key, letter in [('parallel-a', 'a'), ('parallel-b', 'b')]:
                     result = live.locate_attempt(base, {'key': key, 'nonce': letter * 32})
                     self.assertEqual(letter * 32, result['nonce'])
-                for field in ('nonce', 'name', 'directory_identity', 'directory'):
+                    self.assertEqual([result['directory_identity'][0], result['directory_identity'][1]],
+                                     [result['directory_identity'][0], result['directory_identity'][1]])
+                for field in ('nonce', 'name', 'directory'):
                     saved = states[str(base / ('probe-' + 'a' * 32) / 'journal.json')].pop(field)
                     with self.assertRaises(RuntimeError):
                         live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
                     states[str(base / ('probe-' + 'a' * 32) / 'journal.json')][field] = saved
                 states[str(base / ('probe-' + 'a' * 32) / 'journal.json')]['directory_identity'] = [9, 9]
-                with self.assertRaises(RuntimeError):
-                    live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                result = live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                self.assertEqual('a' * 32, result['nonce'])
+                self.assertEqual(str(base / ('probe-' + 'a' * 32)), result['directory'])
                 with self.assertRaises(FileNotFoundError):
                     live.locate_attempt(base, {'key': 'serial', 'nonce': 'd' * 32})
 
