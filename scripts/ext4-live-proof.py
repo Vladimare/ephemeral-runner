@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -202,58 +203,18 @@ def build_images(workspace, base, record, run=command, checkpoint=lambda: None):
 
 
 def locate_attempt(base, attempt):
-    candidate_paths = []
-    try:
-        text = (base / (attempt['key'] + '.stderr')).read_text()
-    except OSError:
-        text = ''
-    for match in re.findall(r'^Recovery journal: (.+/journal.json)$', text, re.M):
-        candidate_paths.append(Path(match))
-    if not candidate_paths:
-        candidate_paths = [
-            path for path in sorted(base.glob('probe-*/journal.json'))
-            if path.parent.parent == base and re.fullmatch(r'probe-[a-f0-9]{32}', path.parent.name)
-        ]
-    valid = []
-    fallback = []
-    seen = set()
-    for journal in candidate_paths:
-        if journal.parent.parent != base or not re.fullmatch(r'probe-[a-f0-9]{32}', journal.parent.name):
-            continue
-        key = str(journal)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            info = journal.parent.lstat()
-        except OSError:
-            continue
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-            continue
-        try:
-            state = private_json(journal)
-        except (OSError, ValueError, TypeError, KeyError):
-            continue
-        if not isinstance(state, dict):
-            continue
-        nonce = state.get('nonce')
-        if nonce is not None and not re.fullmatch(r'[a-f0-9]{32}', str(nonce)):
-            continue
-        directory_ok = state.get('directory') == str(journal.parent)
-        nonce_ok = True if nonce is None else nonce == journal.parent.name.removeprefix('probe-')
-        name = state.get('name')
-        name_ok = True if name is None else name == 'er-ext4-' + (nonce or journal.parent.name.removeprefix('probe-'))
-        identity = state.get('directory_identity')
-        identity_ok = identity is None or identity == [info.st_dev, info.st_ino] or identity == (info.st_dev, info.st_ino)
-        exact = directory_ok and nonce_ok and name_ok
-        if exact and identity_ok:
-            valid.append((journal, state, info))
-        elif exact or (directory_ok and nonce_ok and name_ok):
-            fallback.append((journal, state, info))
-    candidates = valid or fallback
-    if not candidates:
-        raise RuntimeError('Missing or ambiguous exact recovery journal; retained state unresolved')
-    _, state, _ = sorted(candidates, key=lambda item: item[2].st_mtime_ns, reverse=True)[0]
+    nonce = attempt.get('nonce', '')
+    if not isinstance(nonce, str) or not re.fullmatch(r'[a-f0-9]{32}', nonce):
+        raise RuntimeError('Missing exact attempt nonce; retained state unresolved')
+    directory = base / ('probe-' + nonce)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+        raise RuntimeError('Unsafe exact probe directory')
+    state = private_json(directory / 'journal.json')
+    if (state.get('nonce') != nonce or state.get('name') != 'er-ext4-' + nonce
+            or state.get('directory') != str(directory)
+            or state.get('directory_identity') != [info.st_dev, info.st_ino]):
+        raise RuntimeError('Exact attempt journal identity mismatch; retained state unresolved')
     return state
 
 
@@ -385,12 +346,15 @@ def verify_cleanup(state, attempt, proof, run=command):
 def probe_group(base, workspace, image, keys, report, poc):
     active = []
     for key in keys:
-        attempt = dict(key=key, status='NOT RUN', started=time.time(), observations=[])
+        attempt = dict(key=key, nonce=secrets.token_hex(16), status='NOT RUN', started=time.time(), observations=[])
+        if any(a.get('nonce') == attempt['nonce'] for a in report['attempts']):
+            raise RuntimeError('Duplicate attempt nonce; refuse attribution')
         report['attempts'].append(attempt)
+        write_json(base / 'harness.json', report)
         stdout = open(base / (key + '.stdout'), 'x')
         stderr = open(base / (key + '.stderr'), 'x')
         process = subprocess.Popen(['/usr/bin/python3', str(workspace / 'scripts/ext4-workspace-poc.py'),
-            '--disposable-host', '--parent', str(base), '--image', image], stdout=stdout, stderr=stderr,
+            '--disposable-host', '--parent', str(base), '--nonce', attempt['nonce'], '--image', image], stdout=stdout, stderr=stderr,
             env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/nonexistent', 'LC_ALL': 'C'})
         stdout.close(); stderr.close()
         active.append((process, attempt))

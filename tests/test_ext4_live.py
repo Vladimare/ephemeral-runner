@@ -191,48 +191,50 @@ class LiveValidationTests(unittest.TestCase):
         self.assertEqual('overlay rw', record['scratch_findmnt'])
         self.assertIn('losetup', record['tools'])
 
-    def test_locate_attempt_falls_back_to_owned_journal_when_stderr_missing(self):
+    def test_exact_nonce_binding_ignores_parallel_mtimes_and_stale_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            nonce = 'a' * 32
-            directory = base / ('probe-' + nonce)
-            directory.mkdir(mode=0o700)
-            journal = directory / 'journal.json'
-            real = directory.lstat()
-            state = dict(directory=str(directory), directory_identity=[real.st_dev, real.st_ino],
-                         nonce=nonce, name='er-ext4-' + nonce)
-            journal.write_text(json.dumps(state))
-            (base / 'serial.stderr').write_text('')
-            patched = SimpleNamespace(st_mode=real.st_mode, st_uid=0, st_dev=real.st_dev, st_ino=real.st_ino,
-                                     st_mtime_ns=10)
-            with patch.object(live, 'private_json', return_value=state), \
-                    patch.object(Path, 'lstat', return_value=patched):
-                self.assertEqual(state, live.locate_attempt(base, {'key': 'serial'}))
-
-    def test_locate_attempt_chooses_latest_exact_owned_journal_when_multiple_are_present(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            newest = base / ('probe-' + ('a' * 32))
-            stale = base / ('probe-' + ('b' * 32))
-            for directory in (newest, stale):
+            states = {}
+            real_lstat = Path.lstat
+            for n, letter in enumerate('abc'):
+                nonce = letter * 32
+                directory = base / ('probe-' + nonce)
                 directory.mkdir(mode=0o700)
-            newest_journal = newest / 'journal.json'
-            stale_journal = stale / 'journal.json'
-            newest_state = dict(directory=str(newest), directory_identity=[newest.lstat().st_dev, newest.lstat().st_ino],
-                               nonce='a' * 32, name='er-ext4-' + ('a' * 32))
-            stale_state = dict(directory=str(stale), directory_identity=[stale.lstat().st_dev, stale.lstat().st_ino],
-                              nonce='b' * 32, name='er-ext4-' + ('b' * 32))
-            newest_journal.write_text(json.dumps(newest_state))
-            stale_journal.write_text(json.dumps(stale_state))
-            (base / 'serial.stderr').write_text('')
-            with patch.object(live, 'private_json', side_effect=[newest_state, stale_state]), \
-                    patch.object(Path, 'lstat', side_effect=[
-                        SimpleNamespace(st_mode=0o40700, st_uid=0, st_dev=newest.lstat().st_dev, st_ino=newest.lstat().st_ino,
-                                       st_mtime_ns=20),
-                        SimpleNamespace(st_mode=0o40700, st_uid=0, st_dev=stale.lstat().st_dev, st_ino=stale.lstat().st_ino,
-                                       st_mtime_ns=10),
-                    ]):
-                self.assertEqual(newest_state, live.locate_attempt(base, {'key': 'serial'}))
+                info = directory.lstat()
+                state = dict(directory=str(directory), directory_identity=[info.st_dev, info.st_ino],
+                             nonce=nonce, name='er-ext4-' + nonce)
+                journal = directory / 'journal.json'
+                journal.write_text(json.dumps(state))
+                os.utime(journal, (100 + n, 100 + n))
+                states[str(journal)] = state
+            def root_lstat(path):
+                st = real_lstat(path)
+                return SimpleNamespace(st_uid=0, st_mode=st.st_mode, st_dev=st.st_dev, st_ino=st.st_ino)
+            with patch.object(live, 'private_json', side_effect=lambda p: states[str(p)]), \
+                    patch.object(Path, 'lstat', root_lstat):
+                for key, letter in [('parallel-a', 'a'), ('parallel-b', 'b')]:
+                    result = live.locate_attempt(base, {'key': key, 'nonce': letter * 32})
+                    self.assertEqual(letter * 32, result['nonce'])
+                for field in ('nonce', 'name', 'directory_identity', 'directory'):
+                    saved = states[str(base / ('probe-' + 'a' * 32) / 'journal.json')].pop(field)
+                    with self.assertRaises(RuntimeError):
+                        live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                    states[str(base / ('probe-' + 'a' * 32) / 'journal.json')][field] = saved
+                states[str(base / ('probe-' + 'a' * 32) / 'journal.json')]['directory_identity'] = [9, 9]
+                with self.assertRaises(RuntimeError):
+                    live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                with self.assertRaises(FileNotFoundError):
+                    live.locate_attempt(base, {'key': 'serial', 'nonce': 'd' * 32})
+
+    def test_nonce_is_required_and_cli_rejects_invalid_protocol(self):
+        for nonce in (None, '', '../escape', 'A' * 32, 'a' * 31):
+            with self.subTest(nonce=nonce), self.assertRaises(RuntimeError):
+                live.locate_attempt(Path('/unused'), {'key': 'serial', 'nonce': nonce})
+        for args in (['--nonce', 'bad'], ['--nonce', 'a' * 32, '--recover', '/unused']):
+            result = subprocess.run(['python3', str(ROOT / 'scripts/ext4-workspace-poc.py'), *args],
+                                    capture_output=True, text=True)
+            self.assertEqual(2, result.returncode)
+            self.assertIn('--nonce requires a new experiment', result.stderr)
 
     def test_collect_rejects_unknown_paths_and_preserves_unresolved_attempt(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -320,10 +322,13 @@ class LiveValidationTests(unittest.TestCase):
                 live.probe_group(Path(tmp), ROOT, support.IMAGE, ['parallel-a', 'parallel-b'], report, support.poc)
             self.assertEqual(['PASS', 'PASS'], [a['status'] for a in report['attempts']])
             self.assertEqual('PASS', report['container_overlap'])
-            for call in popen.call_args_list:
+            self.assertEqual(2, len({a['nonce'] for a in report['attempts']}))
+            for call, attempt in zip(popen.call_args_list, report['attempts']):
                 argv = call.args[0]
                 self.assertIn(str(ROOT / 'scripts/ext4-workspace-poc.py'), argv)
                 self.assertIn('--disposable-host', argv)
+                self.assertRegex(argv[argv.index('--nonce') + 1], r'^[a-f0-9]{32}$')
+                self.assertEqual(attempt['nonce'], argv[argv.index('--nonce') + 1])
                 self.assertEqual(support.IMAGE, argv[-1])
                 self.assertNotIn('GITHUB_TOKEN', call.kwargs['env'])
 

@@ -3,9 +3,9 @@
 **Live serial container execution failed; production remains NO-GO.** See the
 [verification summary](examples/ext4-poc-report.json) for reported run evidence. The workflow is dormant until a
 maintainer audits the exact PR #16 head and deliberately adds `ext4-live-proof`.
-The opt-in label is currently attached following maintainer-run attempts. This
+The latest review reports the opt-in label absent following maintainer-run attempts. This
 fix does not trigger another run; after independent review of the new exact
-head, the maintainer must remove and re-add the label. Keep PR #16
+head, the maintainer must add the label (remove/re-add only if already attached). Keep PR #16
 Draft until actual artifacts have independent review. Production policy,
 registration, real CI jobs and deployment remain separate projects.
 
@@ -61,7 +61,11 @@ reviewed report to PR #16 themselves.
    have bounded client deadlines; the whole VM is discarded after the job.
 3. Run the **actual** 64 MiB PoC once serially and twice independently in parallel.
    Its admission/instance locks, filesystem bounds, cleanup and journal are not
-   replaced by harness mocks. Poll only exact journal-owned names/labels/IDs and
+   replaced by harness mocks. The harness first durably assigns a unique random
+   128-bit nonce to each attempt, passes it as validated `--nonce`, and reads only
+   `probe-NONCE/journal.json`. Missing/inconsistent nonce, name or directory
+   dev/inode remains UNRESOLVED; no glob, mtime or stderr fallback is allowed.
+   Existing directories cannot be adopted. Poll only exact journal-owned names/labels/IDs and
    loop devices to retain real observations. Mark actual container overlap PASS
    only when two owned containers are observed Running without restarts and both
    start times precede the earliest inspect request in that poll; otherwise

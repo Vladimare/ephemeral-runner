@@ -16,8 +16,8 @@
     "python_suite": {
       "status": "PASS",
       "command": "python3 -m unittest discover -s tests",
-      "tests": 116,
-      "new_poc_tests": 29,
+      "tests": 117,
+      "new_poc_tests": 30,
       "live_harness_tests": 22
     },
     "bash_syntax": {
@@ -60,7 +60,7 @@
   },
   "disposable_linux": {
     "status": "FAIL",
-    "reason": "Maintainer artifact analysis reports allocation guard now passes; serial container exits unsuccessfully after Docker start/wait with missing stderr diagnostics. Exact payload failure remains unknown.",
+    "reason": "Latest maintainer artifact review identifies serial payload rejection of Docker-masked /proc/interrupts tmpfs; wait exit 1, not OOM. New mask policy and exact journal binding not run live.",
     "byte_enospc": "NOT RUN",
     "inode_enospc": "NOT RUN",
     "backing_allocation_and_fixed_size": "PASS for recorded allocation/size; not full runtime enforcement",
@@ -82,13 +82,13 @@
       "label": "ext4-live-proof",
       "head_source": "same-repository event pull_request.head.sha",
       "runner": "ubuntu-24.04",
-      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491373144",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42511506424",
       "artifact": "ext4-live-evidence.json (downloaded and inspected by maintainer per linked comment)"
     },
     "serial_setup": "PASS through Docker creation per reported artifacts",
     "cleanup": "PASS per PoC journal; independent harness cleanup acceptance not established for failed attempts",
     "evidence_source": {
-      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6722960829",
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819159902",
       "scope": "Reported artifact observations from maintainer; raw artifacts were not independently downloaded during this fix."
     },
     "live_attempts": [
@@ -127,6 +127,12 @@
         "head_prefix": "9b82878",
         "status": "FAIL",
         "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42511506424",
+        "head_prefix": "0425e201",
+        "status": "FAIL",
+        "stage": "mount_policy: Unapproved writable mount: /proc/interrupts (tmpfs)"
       }
     ],
     "reported_journal": {
@@ -140,11 +146,18 @@
       "loop": null,
       "mount_id": null,
       "container_id": null,
-      "post_wait_state": "NOT RECORDED by attempted heads"
+      "post_wait_state": {
+        "Status": "exited",
+        "ExitCode": 1,
+        "OOMKilled": false,
+        "Error": ""
+      },
+      "wait_exit_code": "1",
+      "stderr": "RuntimeError: Unapproved writable mount: /proc/interrupts (tmpfs)"
     },
     "fix_validation": {
       "status": "NOT RUN",
-      "reason": "Post-wait state and bounded stdout/stderr diagnostic fix not run live. Independent review then manual label removal/re-addition required; no privileged run triggered."
+      "reason": "Exact mask safety predicates and nonce-bound journals require independent review and a manually authorized hosted run. Label reported absent; no privileged rerun triggered."
     },
     "serial_execution": "FAIL"
   },

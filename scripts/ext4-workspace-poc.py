@@ -622,7 +622,10 @@ def main():
     p.add_argument('--parent', default='/var/lib/ephemeral-ext4-poc')
     p.add_argument('--image', help='Trusted local immutable PoC image ID; never pulled')
     p.add_argument('--recover', help='Exact retained experiment directory; conservative cleanup only')
+    p.add_argument('--nonce', help='Optional exact 128-bit harness attempt identity (32 lowercase hex digits)')
     a = p.parse_args()
+    if a.nonce is not None and (a.recover or not re.fullmatch(r'[0-9a-f]{32}', a.nonce)):
+        p.error('--nonce requires a new experiment and exactly 32 lowercase hex digits')
     gate(a.disposable_host)
     os.umask(0o077)
     parent = private_directory(a.parent)
@@ -648,7 +651,7 @@ def main():
             if int(mem['MemAvailable'].split()[0]) < 512*1024:
                 raise RuntimeError('Require 512 MiB available RAM')
             capacity(os.statvfs(parent))
-            nonce = secrets.token_hex(16)
+            nonce = a.nonce or secrets.token_hex(16)
             directory = parent/('probe-'+nonce)
             directory.mkdir(mode=0o700)
             e = Experiment(directory)
