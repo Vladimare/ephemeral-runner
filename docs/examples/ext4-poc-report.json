@@ -16,9 +16,9 @@
     "python_suite": {
       "status": "PASS",
       "command": "python3 -m unittest discover -s tests",
-      "tests": 111,
-      "new_poc_tests": 25,
-      "live_harness_tests": 21
+      "tests": 116,
+      "new_poc_tests": 29,
+      "live_harness_tests": 22
     },
     "bash_syntax": {
       "status": "PASS",
@@ -60,10 +60,10 @@
   },
   "disposable_linux": {
     "status": "FAIL",
-    "reason": "Maintainer analysis of downloaded artifacts reports serial setup failure: Backing size/allocation/mode changed. Discard-induced deallocation is a hypothesis pending before/after allocation facts from a reviewed new head.",
+    "reason": "Maintainer artifact analysis reports allocation guard now passes; serial container exits unsuccessfully after Docker start/wait with missing stderr diagnostics. Exact payload failure remains unknown.",
     "byte_enospc": "NOT RUN",
     "inode_enospc": "NOT RUN",
-    "backing_allocation_and_fixed_size": "FAIL",
+    "backing_allocation_and_fixed_size": "PASS for recorded allocation/size; not full runtime enforcement",
     "docker_isolation_and_layout": "NOT RUN",
     "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
     "two_overlapping_probes": "NOT RUN",
@@ -82,13 +82,13 @@
       "label": "ext4-live-proof",
       "head_source": "same-repository event pull_request.head.sha",
       "runner": "ubuntu-24.04",
-      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415965257",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491373144",
       "artifact": "ext4-live-evidence.json (downloaded and inspected by maintainer per linked comment)"
     },
-    "serial_setup": "FAIL",
-    "cleanup": "FAIL; retained evidence per reported journal",
+    "serial_setup": "PASS through Docker creation per reported artifacts",
+    "cleanup": "PASS per PoC journal; independent harness cleanup acceptance not established for failed attempts",
     "evidence_source": {
-      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6718714175",
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6722960829",
       "scope": "Reported artifact observations from maintainer; raw artifacts were not independently downloaded during this fix."
     },
     "live_attempts": [
@@ -109,21 +109,44 @@
         "head_prefix": "8e1a31c",
         "status": "FAIL",
         "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42490486414",
+        "head_prefix": "bd354a2",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491017883",
+        "head_prefix": "c5cbd8d",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491373144",
+        "head_prefix": "9b82878",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
       }
     ],
     "reported_journal": {
-      "loop": "/dev/loop0",
-      "loop_rdev": 1792,
-      "pending": null,
+      "pre_format_allocated_bytes": 67108864,
+      "post_format_allocated_bytes": 67112960,
+      "st_size": 67108864,
       "linux_enforcement": "FAIL",
-      "cleanup": "FAIL",
-      "failure": "Backing size/allocation/mode changed",
-      "cleanup_failure": "Backing size/allocation/mode changed"
+      "cleanup": "PASS",
+      "cleanup_failure": null,
+      "failure": "Probe failed: ",
+      "loop": null,
+      "mount_id": null,
+      "container_id": null,
+      "post_wait_state": "NOT RECORDED by attempted heads"
     },
     "fix_validation": {
       "status": "NOT RUN",
-      "reason": "nodiscard and pre/post-format diagnostics require independent review of the new exact head, then manual removal/re-addition of the existing label. No privileged rerun triggered by this fix."
-    }
+      "reason": "Post-wait state and bounded stdout/stderr diagnostic fix not run live. Independent review then manual label removal/re-addition required; no privileged run triggered."
+    },
+    "serial_execution": "FAIL"
   },
   "github_registration": {
     "status": "SKIP",

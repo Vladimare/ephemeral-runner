@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -20,6 +22,7 @@ CID = 'b'*64
 
 def container(mount):
     return {'Id':CID, 'Name':'/test', 'Image':IMAGE,
+            'State':dict(Status='exited', ExitCode=0, OOMKilled=False, Error='', StartedAt='start', FinishedAt='end'),
             'Config':{'User':'10001:10001','Labels':{poc.LABEL:'nonce'}},
             'HostConfig':dict(ReadonlyRootfs=True, NetworkMode='none', CgroupnsMode='private',
                              Privileged=False, IpcMode='private', Memory=256*poc.MIB, MemorySwap=256*poc.MIB,
@@ -134,6 +137,7 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.calls=[]; self.fail=None; self.live=True; self.attached=True; self.mounted=True
         self.e=poc.Experiment(self.temp.name,self.fake_run)
+        self.e.logs=lambda _: dict(returncode=0, stdout=json.dumps({'bytes':'ENOSPC','inodes':{'result':'ENOSPC'}}), stderr='', truncated={})
         self.e.state=dict(schema=1,nonce='nonce',name='test',image_id=IMAGE,container_id=CID,
                           create_attempted=True,loop='/dev/loop0',loop_rdev=os.makedev(7,0),
                           mount_id='42',backing_identity=[1,2],pending=None,tests={},evidence={})
@@ -313,6 +317,74 @@ class LifecycleTests(unittest.TestCase):
                     poc.Experiment.verify_backing(self.e)
                 saved = json.loads(self.e.journal.read_text())
                 self.assertEqual([predicate], saved['evidence']['backing_verification_failure']['failed_predicates'])
+
+    def test_post_wait_failure_survives_cleanup_and_sanitization(self):
+        import test_ext4_live
+        original = self.fake_run
+        def run(args):
+            if args[:2] == ['docker', 'wait']: return '1'
+            if args[:4] == ['docker', 'inspect', '--type', 'container'] and args[-1] == CID:
+                c = container(self.e.mount)
+                c['State'].update(ExitCode=1, OOMKilled=True)
+                return json.dumps([c])
+            if args[:2] == ['docker', 'rm']:
+                saved = json.loads(self.e.journal.read_text())
+                self.assertEqual('1', saved['evidence']['post_wait']['wait_exit_code'])
+                self.assertIn('Traceback', saved['evidence']['post_wait']['logs']['stderr'])
+            return original(args)
+        self.e.run = run
+        self.e.logs=lambda _: dict(returncode=0, stdout='', stderr='Traceback: assertion failed', truncated={})
+        with self.assertRaisesRegex(RuntimeError, 'docker wait=1'): self.e.launch()
+        with patch.object(poc, 'identity', return_value=[1,2]): self.e.cleanup()
+        evidence = test_ext4_live.live.sanitize_state(json.loads(self.e.journal.read_text()))['evidence']
+        self.assertTrue(evidence['post_wait']['state']['OOMKilled'])
+        self.assertIn('Traceback', evidence['post_wait']['logs']['stderr'])
+
+    def test_empty_then_delayed_logs_and_success_json(self):
+        empty = dict(returncode=0, stdout='', stderr='', truncated={})
+        output = self.e.logs(CID)
+        with patch.object(self.e, 'logs', side_effect=[empty, output]), patch.object(poc.time, 'sleep'), \
+                patch.object(poc, 'identity', return_value=[1,2]):
+            self.e.launch()
+        self.assertEqual(2, self.e.state['evidence']['post_wait']['log_attempts'])
+        self.assertEqual('PASS', self.e.state['tests']['linux_enforcement'])
+
+    def test_empty_logs_and_diagnostic_failures_retain_wait_code(self):
+        for failure in ('empty', 'logs', 'inspect', 'ownership'):
+            with self.subTest(failure=failure):
+                original = self.fake_run
+                def run(args):
+                    if args[:2] == ['docker', 'wait']: return '1'
+                    if args[-1] == CID and args[:2] == ['docker', 'inspect']:
+                        if failure == 'inspect': raise RuntimeError('daemon unavailable')
+                        c = container(self.e.mount)
+                        if failure == 'ownership': c['Image'] = 'wrong'
+                        return json.dumps([c])
+                    return original(args)
+                self.e.run = run
+                self.e.logs=lambda _: dict(returncode=0, stdout='', stderr='', truncated={})
+                if failure == 'logs': self.e.logs=lambda _: (_ for _ in ()).throw(OSError('logs unavailable'))
+                with patch.object(poc.time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'docker wait=1'):
+                    self.e.launch()
+                saved=json.loads(self.e.journal.read_text())['evidence']['post_wait']
+                self.assertEqual('1', saved['wait_exit_code'])
+                self.assertTrue(saved['errors'])
+                self.assertNotEqual('PASS', saved['status'])
+
+    def test_real_log_capture_keeps_stderr_caps_and_redacts(self):
+        original = subprocess.Popen
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'fake.py'
+            fake.write_text("import sys\nprint('x'*20000)\nprint('Traceback ghp_private',file=sys.stderr)\n")
+            def popen(args, **kwargs):
+                self.assertEqual(['logs','--tail','100',CID], args[-4:])
+                return original([sys.executable, str(fake)], **kwargs)
+            with patch.object(poc.subprocess, 'Popen', side_effect=popen):
+                logs=poc.capture_logs(CID)
+            self.assertEqual(16384, len(logs['stdout']))
+            self.assertTrue(logs['truncated']['stdout'])
+            self.assertIn('Traceback', logs['stderr'])
+            self.assertNotIn('ghp_private', logs['stderr'])
 
 
 if __name__=='__main__': unittest.main()

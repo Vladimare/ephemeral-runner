@@ -1,6 +1,6 @@
 # Disposable ext4 workspace experiment (issue #15)
 
-Status: **Linux serial setup failed; NO-GO for production**. This extends the
+Status: **Linux serial container execution failed; NO-GO for production**. This extends the
 research in [issue #13](https://github.com/Vladimare/ephemeral-runner/issues/13).
 It does not change the ADR's production decision, installer, runner image,
 systemd lifecycle or `overlay2-xfs-quota` policy. It never registers a runner.
@@ -153,9 +153,17 @@ mount bypasses, create-timeout reconciliation and repeated recovery. Mocked
 concurrency tests exercise locks/independent identities, not simultaneous Linux
 mount or daemon behavior. See the [machine-readable report](examples/ext4-poc-report.json).
 
-Live serial setup failed its backing allocation guard before container creation;
-see the linked report for run URLs and attributed observations. The proposed
-`nodiscard` correction has not been run live. Still **NOT RUN**: real byte/inode
+Maintainer artifact analysis reports that allocation now passes, Docker creation
+succeeds and the serial container fails after start/wait; the exact payload cause
+is unknown. See the linked report for attributed run observations. The diagnostic
+fix preserves `evidence.post_wait`: exact wait reply, ownership-verified post-run
+State, and separate redacted stdout/stderr (16 KiB each, tail 100, three capture
+attempts of at most five seconds each). Empty logs are explicit diagnostic failure;
+CLI errors remain unknown evidence and never override the original wait reply.
+Evidence is saved before identity-checked cleanup. `docker_inspect` remains the
+pre-start snapshot. JSON phase markers go to payload stderr; final stdout remains
+the JSON result. No new privileged run was triggered by this fix.
+Still **NOT RUN**: real byte/inode
 ENOSPC, verified fixed loop limit,
 Docker read-only/limit/layout smoke, SIGTERM/SIGKILL at each boundary, daemon outage,
 busy mount, reboot recovery and two overlapping real probes. Run each in fresh

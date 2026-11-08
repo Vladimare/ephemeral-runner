@@ -1,6 +1,6 @@
 # Issue #17: opt-in GitHub-hosted Linux evidence
 
-**Live serial setup failed; production remains NO-GO.** See the
+**Live serial container execution failed; production remains NO-GO.** See the
 [verification summary](examples/ext4-poc-report.json) for reported run evidence. The workflow is dormant until a
 maintainer audits the exact PR #16 head and deliberately adds `ext4-live-proof`.
 The opt-in label is currently attached following maintainer-run attempts. This

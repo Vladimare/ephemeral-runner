@@ -9,10 +9,12 @@ import os
 from pathlib import Path
 import re
 import secrets
+import selectors
 import signal
 import stat
 import subprocess
 import sys
+import time
 
 MIB = 1024 * 1024
 SIZE = 64 * MIB
@@ -33,6 +35,48 @@ def command(args):
     result = subprocess.run(args, env=env, check=True, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
     return result.stdout.strip()
+
+
+def diagnostic_text(text):
+    text = re.sub(r'(?i)((?:bearer|basic)\s+)[^\s"\\]+', r'\1[REDACTED]', text)
+    text = re.sub(r'\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)', '[REDACTED]', text)
+    return re.sub(r'(https?://)[^/\s@]+@', r'\1[REDACTED]@', text)
+
+
+def capture_logs(container_id):
+    """Bound memory per stream, drain excess, and bound Docker CLI lifetime."""
+    cap = 16 * 1024
+    streams = {'stdout': bytearray(), 'stderr': bytearray()}
+    truncated = {'stdout': False, 'stderr': False}
+    deadline = time.monotonic() + 5
+    env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/nonexistent',
+           'DOCKER_CONFIG': '/nonexistent', 'LC_ALL': 'C'}
+    with subprocess.Popen(['docker', '--host', SOCKET, 'logs', '--tail', '100', container_id],
+                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ, 'stdout')
+            selector.register(process.stderr, selectors.EVENT_READ, 'stderr')
+            try:
+                while selector.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired('docker logs', 5)
+                    for key, _ in selector.select(remaining):
+                        data = os.read(key.fileobj.fileno(), 4096)
+                        if not data:
+                            selector.unregister(key.fileobj)
+                            continue
+                        stream = key.data
+                        room = cap - len(streams[stream])
+                        streams[stream].extend(data[:room])
+                        truncated[stream] |= len(data) > room
+                code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            except BaseException:
+                process.kill()
+                process.wait()
+                raise
+    return dict(returncode=code, truncated=truncated,
+                **{k: diagnostic_text(bytes(v).decode('utf-8', errors='replace')) for k, v in streams.items()})
 
 
 def identity(path):
@@ -129,9 +173,10 @@ def payload_mount_policy_source():
 
 
 class Experiment:
-    def __init__(self, directory, run=command):
+    def __init__(self, directory, run=command, logs=capture_logs):
         self.directory = Path(directory)
         self.run = run
+        self.logs = logs
         self.journal = self.directory / 'journal.json'
         self.image = self.directory / 'disk.img'
         self.mount = self.directory / 'mnt'
@@ -301,9 +346,61 @@ class Experiment:
         s['evidence']['docker_inspect'] = c
         self.save()
         self.run(['docker', 'start', reply])
-        if self.run(['docker', 'wait', reply]) != '0':
-            raise RuntimeError('Probe failed: ' + self.run(['docker', 'logs', reply]))
-        s['evidence']['probe'] = json.loads(self.run(['docker', 'logs', reply]))
+        try:
+            wait_code = self.run(['docker', 'wait', reply])
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            s['evidence']['post_wait'] = dict(status='UNKNOWN', wait_exit_code=None,
+                errors=['wait CLI: ' + diagnostic_text(str(error))[:1024]])
+            self.save()
+            raise RuntimeError('Docker wait evidence unavailable; see journal') from error
+        diagnostics = s['evidence']['post_wait'] = dict(wait_exit_code=wait_code, status='UNKNOWN', errors=[])
+        self.save()
+        try:
+            records = json.loads(self.run(['docker', 'inspect', '--type', 'container', reply]))
+            if len(records) != 1:
+                raise RuntimeError('Ambiguous post-wait inspect')
+            c = records[0]
+            if (c.get('Id') != reply or c.get('Name') != '/' + s['name']
+                    or c.get('Image') != s['image_id']
+                    or c.get('Config', {}).get('Labels', {}).get(LABEL) != s['nonce']):
+                raise RuntimeError('Post-wait ownership mismatch')
+            diagnostics['container_id'] = reply
+            diagnostics['state'] = {k: c.get('State', {}).get(k) for k in
+                ('Status', 'ExitCode', 'OOMKilled', 'Error', 'StartedAt', 'FinishedAt')}
+            diagnostics['state'] = {k: diagnostic_text(v) if isinstance(v, str) else v
+                                    for k, v in diagnostics['state'].items()}
+        except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as error:
+            diagnostics['errors'].append('inspect: ' + diagnostic_text(str(error))[:1024])
+        self.save()
+        for attempt in range(3):
+            try:
+                logs = self.logs(reply)
+                diagnostics['logs'] = logs
+                diagnostics['log_attempts'] = attempt + 1
+                self.save()
+                if logs['returncode'] != 0:
+                    raise RuntimeError('Docker logs CLI failed: ' + str(logs['returncode']))
+                if logs['stdout'] or logs['stderr']:
+                    break
+                if attempt < 2:
+                    time.sleep(0.25)
+            except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as error:
+                diagnostics['errors'].append('logs: ' + diagnostic_text(str(error))[:1024])
+                break
+        logs = diagnostics.get('logs', {})
+        diagnostics['logs_unavailable'] = not (logs.get('stdout') or logs.get('stderr'))
+        if diagnostics['logs_unavailable']:
+            diagnostics['errors'].append('logs_unavailable after bounded capture')
+        state = diagnostics.get('state', {})
+        if (wait_code != '0' or diagnostics['errors'] or state.get('ExitCode') != 0
+                or state.get('Status') != 'exited' or state.get('OOMKilled') is not False
+                or state.get('Error') or any(logs.get('truncated', {}).values())):
+            diagnostics['status'] = 'FAIL' if 'state' in diagnostics else 'UNKNOWN'
+            self.save()
+            raise RuntimeError('Probe failed: docker wait=' + wait_code + '; see evidence.post_wait in journal')
+        diagnostics['status'] = 'PASS'
+        self.save()
+        s['evidence']['probe'] = json.loads(logs['stdout'])
         observed = s['evidence']['probe']
         if observed.get('bytes') != 'ENOSPC' or observed.get('inodes', {}).get('result') != 'ENOSPC':
             raise RuntimeError('Missing observed byte/inode enforcement evidence')
@@ -398,15 +495,19 @@ def validate_container(c, mount):
 
 
 PAYLOAD = r'''
-import errno, json, os, shutil
+import errno, json, os, shutil, sys
 from pathlib import Path
+def progress(phase):
+    print(json.dumps({"phase": phase}), file=sys.stderr, flush=True)
 report = {}
+progress("cgroups")
 assert os.getuid() == 10001
 for name, expected in [('memory.max','268435456'), ('memory.swap.max','0'),
                        ('cpu.max','25000 100000'), ('pids.max','64')]:
     value = Path('/sys/fs/cgroup', name).read_text().strip()
     assert value == expected, (name, value)
     report[name] = value
+progress('mount_policy')
 report['mountinfo'] = Path('/proc/self/mountinfo').read_text()
 mounts = {}
 for line in report['mountinfo'].splitlines():
@@ -421,11 +522,13 @@ for p in ['/tmp', '/dev/shm']:
 # writable filesystem mounts, while kernel pseudo-filesystems are recorded.
 __MOUNT_POLICY_SOURCE__
 enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))
+progress('readonly_probes')
 for p in ['/', '/etc', '/var/tmp', '/home', '/opt/actions-runner']:
     try: Path(p, 'forbidden-probe').write_text('x')
     except OSError as e: assert e.errno in (errno.EROFS, errno.EACCES)
     else: raise AssertionError('write escaped bounds: '+p)
 assert not Path('/var/run/docker.sock').exists()
+progress('layout')
 source = Path('/opt/actions-runner')
 for name in ['config.sh', 'run.sh', 'bin/Runner.Listener']:
     assert (source/name).is_file() and os.access(source/name, os.R_OK | os.X_OK)
@@ -447,6 +550,7 @@ v=os.statvfs('/work'); report['statfs']={'bytes':v.f_blocks*v.f_frsize,'inodes':
 assert 0 < v.f_blocks*v.f_frsize <= 67108864 and 0 < v.f_files <= 2048
 # Hard attempt ceilings even when enforcement is defective. This cannot fill
 # the host: the container sees only the 64 MiB loop block device.
+progress('byte_enospc')
 try:
     with open('/work/bytes','wb',buffering=0) as f:
         for _ in range(66):
@@ -456,6 +560,7 @@ except OSError as e:
     assert e.errno == errno.ENOSPC; report['bytes']='ENOSPC'
 else: raise AssertionError('byte exhaustion not observed')
 finally: Path('/work/bytes').unlink(missing_ok=True)
+progress('inode_enospc')
 count=0
 try:
     for i in range(2050):
