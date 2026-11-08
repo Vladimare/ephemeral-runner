@@ -203,10 +203,36 @@ class LiveValidationTests(unittest.TestCase):
                          nonce=nonce, name='er-ext4-' + nonce)
             journal.write_text(json.dumps(state))
             (base / 'serial.stderr').write_text('')
-            patched = SimpleNamespace(st_mode=real.st_mode, st_uid=0, st_dev=real.st_dev, st_ino=real.st_ino)
+            patched = SimpleNamespace(st_mode=real.st_mode, st_uid=0, st_dev=real.st_dev, st_ino=real.st_ino,
+                                     st_mtime_ns=10)
             with patch.object(live, 'private_json', return_value=state), \
                     patch.object(Path, 'lstat', return_value=patched):
                 self.assertEqual(state, live.locate_attempt(base, {'key': 'serial'}))
+
+    def test_locate_attempt_chooses_latest_exact_owned_journal_when_multiple_are_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            newest = base / ('probe-' + ('a' * 32))
+            stale = base / ('probe-' + ('b' * 32))
+            for directory in (newest, stale):
+                directory.mkdir(mode=0o700)
+            newest_journal = newest / 'journal.json'
+            stale_journal = stale / 'journal.json'
+            newest_state = dict(directory=str(newest), directory_identity=[newest.lstat().st_dev, newest.lstat().st_ino],
+                               nonce='a' * 32, name='er-ext4-' + ('a' * 32))
+            stale_state = dict(directory=str(stale), directory_identity=[stale.lstat().st_dev, stale.lstat().st_ino],
+                              nonce='b' * 32, name='er-ext4-' + ('b' * 32))
+            newest_journal.write_text(json.dumps(newest_state))
+            stale_journal.write_text(json.dumps(stale_state))
+            (base / 'serial.stderr').write_text('')
+            with patch.object(live, 'private_json', side_effect=[newest_state, stale_state]), \
+                    patch.object(Path, 'lstat', side_effect=[
+                        SimpleNamespace(st_mode=0o40700, st_uid=0, st_dev=newest.lstat().st_dev, st_ino=newest.lstat().st_ino,
+                                       st_mtime_ns=20),
+                        SimpleNamespace(st_mode=0o40700, st_uid=0, st_dev=stale.lstat().st_dev, st_ino=stale.lstat().st_ino,
+                                       st_mtime_ns=10),
+                    ]):
+                self.assertEqual(newest_state, live.locate_attempt(base, {'key': 'serial'}))
 
     def test_collect_rejects_unknown_paths_and_preserves_unresolved_attempt(self):
         with tempfile.TemporaryDirectory() as tmp:

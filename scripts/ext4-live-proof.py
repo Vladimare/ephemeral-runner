@@ -214,7 +214,7 @@ def locate_attempt(base, attempt):
             path for path in sorted(base.glob('probe-*/journal.json'))
             if path.parent.parent == base and re.fullmatch(r'probe-[a-f0-9]{32}', path.parent.name)
         ]
-    unique = []
+    valid = []
     seen = set()
     for journal in candidate_paths:
         if journal.parent.parent != base or not re.fullmatch(r'probe-[a-f0-9]{32}', journal.parent.name):
@@ -223,19 +223,25 @@ def locate_attempt(base, attempt):
         if key in seen:
             continue
         seen.add(key)
-        unique.append(journal)
-    if len(unique) != 1:
+        try:
+            info = journal.parent.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            continue
+        try:
+            state = private_json(journal)
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        if (state.get('directory') != str(journal.parent)
+                or state.get('directory_identity') != [info.st_dev, info.st_ino]
+                or state.get('nonce') != journal.parent.name.removeprefix('probe-')
+                or state.get('name') != 'er-ext4-' + state['nonce']):
+            continue
+        valid.append((journal, state, info))
+    if not valid:
         raise RuntimeError('Missing or ambiguous exact recovery journal; retained state unresolved')
-    journal = unique[0]
-    info = journal.parent.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-        raise RuntimeError('Untrusted probe directory')
-    state = private_json(journal)
-    if (state.get('directory') != str(journal.parent)
-            or state.get('directory_identity') != [info.st_dev, info.st_ino]
-            or state.get('nonce') != journal.parent.name.removeprefix('probe-')
-            or state.get('name') != 'er-ext4-' + state['nonce']):
-        raise RuntimeError('Probe journal ownership mismatch')
+    journal, state, _ = sorted(valid, key=lambda item: item[2].st_mtime_ns, reverse=True)[0]
     return state
 
 
