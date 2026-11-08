@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "sanitized-verification-summary",
   "baseline": "3c944324c750c1db439380690c4f6889841579fb",
-  "decision": "NO-GO for production; disposable-Linux validation pending",
+  "decision": "NO-GO for production; Phase A offline component proof PASS",
   "environment": {
     "os": "macOS",
     "python": "3.14.7"
@@ -59,37 +59,38 @@
     }
   },
   "disposable_linux": {
-    "status": "FAIL",
-    "reason": "Latest maintainer artifact review reports prior masks pass actual null-device checks; serial payload now rejects /proc/latency_stats. Expanded exact 12-path policy and strict directory-identity restoration not run live.",
-    "byte_enospc": "NOT RUN",
-    "inode_enospc": "NOT RUN",
-    "backing_allocation_and_fixed_size": "PASS for recorded allocation/size; not full runtime enforcement",
-    "docker_isolation_and_layout": "NOT RUN",
+    "status": "PASS",
+    "reason": "Phase A offline component proof passed on the exact implementation head; artifact inspection results attributed to linked maintainer audit. No production or real runner acceptance.",
+    "byte_enospc": "PASS",
+    "inode_enospc": "PASS",
+    "backing_allocation_and_fixed_size": "PASS",
+    "docker_isolation_and_layout": "PASS (offline layout smoke only; no runner execution)",
     "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
-    "two_overlapping_probes": "NOT RUN",
+    "two_overlapping_probes": "PASS",
     "evidence": {
-      "mountinfo": null,
-      "statfs": null,
-      "backing_properties": null,
-      "loop_identity": null,
-      "docker_inspect": null,
-      "cgroup_values": null
+      "source": "ext4-live-evidence.json",
+      "artifact_id": 13631130445,
+      "artifact_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690/artifacts/13631130445",
+      "scope": "Serial and parallel probes: byte/inode ENOSPC, backing/loop bounds, readonly/cgroup/mount constraints, actual overlap, cleanup. Raw observations remain in sanitized artifact."
     },
     "opt_in_workflow": {
-      "status": "FAIL",
+      "status": "PASS",
       "path": ".github/workflows/ext4-live-proof.yml",
       "pr": 16,
       "label": "ext4-live-proof",
       "head_source": "same-repository event pull_request.head.sha",
       "runner": "ubuntu-24.04",
-      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158",
-      "artifact": "ext4-live-evidence.json (downloaded and inspected by maintainer per linked comment)"
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "artifact": "ext4-live-evidence.json",
+      "artifact_id": 13631130445,
+      "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "artifact_digest": "sha256:95d3352294770adb5ea090e8df323a2c367da0b29cdd26d6e62e5fb727be6049"
     },
-    "serial_setup": "PASS through Docker creation per reported artifacts",
-    "cleanup": "PASS per PoC journal; independent harness cleanup acceptance not established for failed attempts",
+    "serial_setup": "PASS",
+    "cleanup": "PASS including independent harness post-run cleanup proof",
     "evidence_source": {
-      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819218373",
-      "scope": "Reported artifact observations from maintainer; raw artifacts were not independently downloaded during this fix."
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
+      "scope": "PASS evidence details from maintainer downloaded-artifact audit; run success/head and artifact metadata independently verified through GitHub API during documentation update. Raw artifact not independently inspected in this update."
     },
     "live_attempts": [
       {
@@ -139,9 +140,24 @@
         "head_prefix": "da61e5f",
         "status": "FAIL",
         "stage": "mount_policy: Unapproved writable mount: /proc/latency_stats (tmpfs)"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+        "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+        "status": "PASS",
+        "stage": "Phase A serial and parallel offline component proof",
+        "artifact_id": 13631130445
       }
     ],
-    "reported_journal": {
+    "fix_validation": {
+      "status": "PASS",
+      "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "scope": "Phase A offline proof only; documentation-only update does not rerun privileged validation."
+    },
+    "serial_execution": "PASS",
+    "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+    "historical_failed_journal": {
       "pre_format_allocated_bytes": 67108864,
       "post_format_allocated_bytes": 67112960,
       "st_size": 67108864,
@@ -159,25 +175,27 @@
         "Error": ""
       },
       "wait_exit_code": "1",
-      "stderr": "RuntimeError: Unapproved writable mount: /proc/latency_stats (tmpfs)"
-    },
-    "fix_validation": {
-      "status": "NOT RUN",
-      "reason": "Complete static 12-path masks and fail-closed directory identity require review of final head, then manual label removal/re-addition. No privileged rerun triggered."
-    },
-    "serial_execution": "FAIL"
+      "stderr": "RuntimeError: Unapproved writable mount: /proc/latency_stats (tmpfs)",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158"
+    }
   },
   "github_registration": {
-    "status": "SKIP",
+    "status": "NOT RUN",
     "reason": "Forbidden for this PoC; no credentials or registration calls used."
   },
   "deployment": {
-    "status": "SKIP",
+    "status": "NOT RUN",
     "reason": "Existing deployed runners and Docker hosts remain outside scope and untouched."
   },
   "independent_architecture_security_review": {
-    "status": "PENDING for allocation fix and actual live acceptance",
+    "status": "Phase A evidence audit complete; final documentation review pending",
     "required_before_merge": true,
-    "prior_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5814740938"
+    "prior_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5814740938",
+    "phase_a_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
+    "scope": "Offline research artifact only; no merge or deployment performed by this task."
+  },
+  "production_integration": {
+    "status": "NOT RUN",
+    "decision": "NO-GO for production"
   }
 }

@@ -1,13 +1,15 @@
 # Issue #17: opt-in GitHub-hosted Linux evidence
 
-**Live serial container execution failed; production remains NO-GO.** See the
-[verification summary](examples/ext4-poc-report.json) for reported run evidence. The workflow is dormant until a
-maintainer audits the exact PR #16 head and deliberately adds `ext4-live-proof`.
-The latest review reports the opt-in label attached following maintainer-run attempts. This
-fix does not trigger another run; after independent review of the new exact
-head, the maintainer must add the label (remove/re-add only if already attached). Keep PR #16
-Draft until actual artifacts have independent review. Production policy,
-registration, real CI jobs and deployment remain separate projects.
+**Phase A offline component proof PASS; production remains NO-GO.** See the
+[verification summary](examples/ext4-poc-report.json) for exact head, successful
+run **42514199690**, artifact **13631130445**, historical failures and limitations.
+The maintainer's downloaded-artifact audit reports serial/parallel ENOSPC,
+isolation, overlap and independent cleanup PASS. The workflow remains dormant
+for ordinary pushes and runs only on deliberate opt-in label events. Keep the
+verified runtime/harness and security checks; do not rerun rootful validation
+for documentation-only changes. Final documentation review remains pending;
+registration, real runner jobs, crash/reboot recovery and production integration
+are separate gates. No merge or deployment is performed by this update.
 
 ## Security and precise trigger
 

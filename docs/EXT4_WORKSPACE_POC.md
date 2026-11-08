@@ -1,6 +1,6 @@
 # Disposable ext4 workspace experiment (issue #15)
 
-Status: **Linux serial container execution failed; NO-GO for production**. This extends the
+Status: **Phase A offline component proof PASS; NO-GO for production**. This extends the
 research in [issue #13](https://github.com/Vladimare/ephemeral-runner/issues/13).
 It does not change the ADR's production decision, installer, runner image,
 systemd lifecycle or `overlay2-xfs-quota` policy. It never registers a runner.
@@ -165,26 +165,29 @@ mount bypasses, create-timeout reconciliation and repeated recovery. Mocked
 concurrency tests exercise locks/independent identities, not simultaneous Linux
 mount or daemon behavior. See the [machine-readable report](examples/ext4-poc-report.json).
 
-Maintainer artifact analysis reports that allocation now passes, Docker creation
-succeeds and the serial container fails after start/wait; the exact payload cause
-was diagnosed in run 42511506424 as a rejected Docker mask at
-`/proc/interrupts`; the later run 42512621158 passed that mask and rejected
-`/proc/latency_stats`. See the linked report for attributed run observations. The diagnostic
-fix preserves `evidence.post_wait`: exact wait reply, ownership-verified post-run
-State, and separate redacted stdout/stderr (16 KiB each, tail 100, three capture
-attempts of at most five seconds each). Empty logs are explicit diagnostic failure;
-CLI errors remain unknown evidence and never override the original wait reply.
-Evidence is saved before identity-checked cleanup. `docker_inspect` remains the
-pre-start snapshot. JSON phase markers go to payload stderr; final stdout remains
-the JSON result. No new privileged run was triggered by this fix.
-Still **NOT RUN**: real byte/inode
-ENOSPC, verified fixed loop limit,
-Docker read-only/limit/layout smoke, SIGTERM/SIGKILL at each boundary, daemon outage,
-busy mount, reboot recovery and two overlapping real probes. Run each in fresh
-disposable VM snapshots, preserving before/after mount/loop/container evidence.
-For kills/outages, verify cleanup either completes with exact ownership or
-retains evidence; require repeated recovery to leave unrelated sentinel resources
-unchanged. Normal CI executes only unit tests, never this experiment.
+Phase A passed on exact implementation head
+`4bcdf801804aef1f8f81f66ba3892b511f2fcc99`: normal
+[unit CI](https://github.com/Vladimare/ephemeral-runner/actions/runs/42514003919)
+and [opt-in Linux proof](https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690)
+are successful on that same head. Artifact **13631130445** contains
+`ext4-live-evidence.json`. The [maintainer's downloaded-artifact audit](https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193)
+reports serial and parallel probes, byte/inode ENOSPC, backing/loop bounds,
+readonly/cgroup/mount constraints, observed overlap and independent cleanup PASS.
+This documentation update independently verified run/head/artifact metadata;
+it does not constitute a new independent examination of the raw artifact.
+Historical allocation and mount-policy failures remain in the machine-readable
+report as earlier attempts, not current outcomes.
+
+The retained diagnostics preserve `evidence.post_wait`, bounded separate logs,
+pre-start inspect and payload phase markers. Keep the verified prototype,
+fixture, harness, tests and security checks intact. The workflow remains
+explicit opt-in only; no rootful rerun is required for this text-only update.
+
+Still **NOT RUN**: SIGTERM/SIGKILL fault matrix, daemon outage, busy mount and
+reboot recovery, actual runner registration/job lifecycle and production
+integration. These require separate work and isolated environments; normal
+unit CI is not evidence of these live behaviors. Phase A proves the bounded
+offline component, not a deployable GitHub Actions runner.
 
 No production backend can be accepted from mocked green tests. If live
 preconditions or enforcement fail, record the failing command and observed state
@@ -201,7 +204,8 @@ source/head, permission, VM and artifact gates. It runs only after independent
 workflow review and a maintainer manually adding `ext4-live-proof` to PR #16.
 No opt-in label was applied while implementing this tooling. The checked-out
 label-event head is frozen, and normal pushes do not execute privileged tests.
-The repository summary records the reported live **FAIL** and remaining
-**NOT RUN** gates; no successful enforcement or cleanup is claimed.
+The repository summary records Phase A **PASS** on the exact implementation
+head above, historical failures and remaining **NOT RUN** gates. No merge,
+release or deployment approval follows from the offline proof.
 The guide includes a separate QEMU fallback if hosted ext4/loop prerequisites
 produce SKIP/NO-GO. Do not change a shared Docker host to make the proof pass.
