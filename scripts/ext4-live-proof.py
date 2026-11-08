@@ -215,6 +215,7 @@ def locate_attempt(base, attempt):
             if path.parent.parent == base and re.fullmatch(r'probe-[a-f0-9]{32}', path.parent.name)
         ]
     valid = []
+    fallback = []
     seen = set()
     for journal in candidate_paths:
         if journal.parent.parent != base or not re.fullmatch(r'probe-[a-f0-9]{32}', journal.parent.name):
@@ -233,15 +234,22 @@ def locate_attempt(base, attempt):
             state = private_json(journal)
         except (OSError, ValueError, TypeError, KeyError):
             continue
-        if (state.get('directory') != str(journal.parent)
-                or state.get('directory_identity') != [info.st_dev, info.st_ino]
-                or state.get('nonce') != journal.parent.name.removeprefix('probe-')
-                or state.get('name') != 'er-ext4-' + state['nonce']):
+        if not isinstance(state, dict):
             continue
-        valid.append((journal, state, info))
-    if not valid:
+        nonce = state.get('nonce')
+        if not re.fullmatch(r'[a-f0-9]{32}', str(nonce or '')):
+            continue
+        exact = (state.get('directory') == str(journal.parent)
+                 and nonce == journal.parent.name.removeprefix('probe-')
+                 and state.get('name') == 'er-ext4-' + nonce)
+        if exact and state.get('directory_identity') == [info.st_dev, info.st_ino]:
+            valid.append((journal, state, info))
+        elif exact:
+            fallback.append((journal, state, info))
+    candidates = valid or fallback
+    if not candidates:
         raise RuntimeError('Missing or ambiguous exact recovery journal; retained state unresolved')
-    journal, state, _ = sorted(valid, key=lambda item: item[2].st_mtime_ns, reverse=True)[0]
+    _, state, _ = sorted(candidates, key=lambda item: item[2].st_mtime_ns, reverse=True)[0]
     return state
 
 
