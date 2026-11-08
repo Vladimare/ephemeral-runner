@@ -23,8 +23,10 @@ SOCKET = 'unix:///var/run/docker.sock'
 TMPFS = '/tmp:rw,nosuid,nodev,noexec,size=8m,nr_inodes=1024,mode=1777'
 PSEUDO_FILESYSTEMS = {'proc', 'sysfs', 'cgroup2', 'devpts', 'mqueue'}
 APPROVED_RW_MOUNTS = {'/work', '/tmp', '/dev', '/dev/shm'}
-DOCKER_FILE_MASKS = {'/proc/interrupts', '/proc/kcore', '/proc/keys', '/proc/timer_list'}
-DOCKER_DIRECTORY_MASKS = {'/proc/acpi', '/proc/scsi', '/sys/firmware'}
+DOCKER_FILE_MASKS = {'/proc/interrupts', '/proc/kcore', '/proc/keys', '/proc/latency_stats',
+                     '/proc/timer_list', '/proc/timer_stats', '/proc/sched_debug'}
+DOCKER_DIRECTORY_MASKS = {'/proc/asound', '/proc/acpi', '/proc/scsi', '/sys/firmware',
+                          '/sys/devices/virtual/powercap'}
 DOCKER_MANAGED_FILES = {'/etc/hosts', '/etc/hostname', '/etc/resolv.conf'}
 
 

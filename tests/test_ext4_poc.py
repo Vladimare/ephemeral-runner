@@ -157,6 +157,33 @@ class PolicyTests(unittest.TestCase):
         self.assertIn('DOCKER_FILE_MASKS =', poc.PAYLOAD)
         self.assertIn('DOCKER_DIRECTORY_MASKS =', poc.PAYLOAD)
 
+    def test_observed_twelve_mask_fixture_keeps_actual_safety_checks(self):
+        # Exact HostConfig.MaskedPaths from run 42512621158, not a dynamic allowlist.
+        files = {'/proc/interrupts', '/proc/kcore', '/proc/keys', '/proc/latency_stats',
+                 '/proc/timer_list', '/proc/timer_stats', '/proc/sched_debug'}
+        directories = {'/proc/asound', '/proc/acpi', '/proc/scsi', '/sys/firmware',
+                       '/sys/devices/virtual/powercap'}
+        self.assertEqual(files, poc.DOCKER_FILE_MASKS)
+        self.assertEqual(directories, poc.DOCKER_DIRECTORY_MASKS)
+        mounts = {p: ({'rw'}, 'tmpfs') for p in files}
+        mounts.update({p: ({'ro'}, 'tmpfs') for p in directories})
+        def facts(path):
+            return dict(character=path in files, directory=path in directories,
+                        rdev_major=1 if path in files else 0, rdev_minor=3 if path in files else 0)
+        writable = lambda path: path in files
+        poc.enforce_mount_policy(mounts, writable, facts)
+        for path in files:
+            def unsafe(candidate):
+                return dict(character=False, directory=False, rdev_major=0, rdev_minor=0) if candidate == path else facts(candidate)
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'Unsafe Docker file mask'):
+                poc.enforce_mount_policy(mounts, writable, unsafe)
+        for path in directories:
+            changed = dict(mounts, **{path: ({'rw'}, 'tmpfs')})
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'Unsafe Docker directory mask'):
+                poc.enforce_mount_policy(changed, lambda candidate: candidate == path or writable(candidate), facts)
+        with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /proc/escape'):
+            poc.enforce_mount_policy(dict(mounts, **{'/proc/escape': ({'rw'}, 'tmpfs')}), writable, facts)
+
     def test_payload_uses_shared_mount_policy_source(self):
         self.assertIn(inspect.getsource(poc.enforce_mount_policy).strip(), poc.PAYLOAD)
         self.assertIn("enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))", poc.PAYLOAD)

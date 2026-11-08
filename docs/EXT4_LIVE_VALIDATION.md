@@ -3,7 +3,7 @@
 **Live serial container execution failed; production remains NO-GO.** See the
 [verification summary](examples/ext4-poc-report.json) for reported run evidence. The workflow is dormant until a
 maintainer audits the exact PR #16 head and deliberately adds `ext4-live-proof`.
-The latest review reports the opt-in label absent following maintainer-run attempts. This
+The latest review reports the opt-in label attached following maintainer-run attempts. This
 fix does not trigger another run; after independent review of the new exact
 head, the maintainer must add the label (remove/re-add only if already attached). Keep PR #16
 Draft until actual artifacts have independent review. Production policy,

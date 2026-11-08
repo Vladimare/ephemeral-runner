@@ -16,8 +16,8 @@
     "python_suite": {
       "status": "PASS",
       "command": "python3 -m unittest discover -s tests",
-      "tests": 117,
-      "new_poc_tests": 30,
+      "tests": 118,
+      "new_poc_tests": 31,
       "live_harness_tests": 22
     },
     "bash_syntax": {
@@ -60,7 +60,7 @@
   },
   "disposable_linux": {
     "status": "FAIL",
-    "reason": "Latest maintainer artifact review identifies serial payload rejection of Docker-masked /proc/interrupts tmpfs; wait exit 1, not OOM. New mask policy and exact journal binding not run live.",
+    "reason": "Latest maintainer artifact review reports prior masks pass actual null-device checks; serial payload now rejects /proc/latency_stats. Expanded exact 12-path policy and strict directory-identity restoration not run live.",
     "byte_enospc": "NOT RUN",
     "inode_enospc": "NOT RUN",
     "backing_allocation_and_fixed_size": "PASS for recorded allocation/size; not full runtime enforcement",
@@ -82,13 +82,13 @@
       "label": "ext4-live-proof",
       "head_source": "same-repository event pull_request.head.sha",
       "runner": "ubuntu-24.04",
-      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42511506424",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158",
       "artifact": "ext4-live-evidence.json (downloaded and inspected by maintainer per linked comment)"
     },
     "serial_setup": "PASS through Docker creation per reported artifacts",
     "cleanup": "PASS per PoC journal; independent harness cleanup acceptance not established for failed attempts",
     "evidence_source": {
-      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819159902",
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819218373",
       "scope": "Reported artifact observations from maintainer; raw artifacts were not independently downloaded during this fix."
     },
     "live_attempts": [
@@ -133,6 +133,12 @@
         "head_prefix": "0425e201",
         "status": "FAIL",
         "stage": "mount_policy: Unapproved writable mount: /proc/interrupts (tmpfs)"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158",
+        "head_prefix": "da61e5f",
+        "status": "FAIL",
+        "stage": "mount_policy: Unapproved writable mount: /proc/latency_stats (tmpfs)"
       }
     ],
     "reported_journal": {
@@ -153,11 +159,11 @@
         "Error": ""
       },
       "wait_exit_code": "1",
-      "stderr": "RuntimeError: Unapproved writable mount: /proc/interrupts (tmpfs)"
+      "stderr": "RuntimeError: Unapproved writable mount: /proc/latency_stats (tmpfs)"
     },
     "fix_validation": {
       "status": "NOT RUN",
-      "reason": "Exact mask safety predicates and nonce-bound journals require independent review and a manually authorized hosted run. Label reported absent; no privileged rerun triggered."
+      "reason": "Complete static 12-path masks and fail-closed directory identity require review of final head, then manual label removal/re-addition. No privileged rerun triggered."
     },
     "serial_execution": "FAIL"
   },

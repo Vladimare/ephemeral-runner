@@ -215,17 +215,27 @@ class LiveValidationTests(unittest.TestCase):
                 for key, letter in [('parallel-a', 'a'), ('parallel-b', 'b')]:
                     result = live.locate_attempt(base, {'key': key, 'nonce': letter * 32})
                     self.assertEqual(letter * 32, result['nonce'])
-                    self.assertEqual([result['directory_identity'][0], result['directory_identity'][1]],
-                                     [result['directory_identity'][0], result['directory_identity'][1]])
+                    self.assertEqual(states[str(base / ('probe-' + letter * 32) / 'journal.json')], result)
                 for field in ('nonce', 'name', 'directory'):
                     saved = states[str(base / ('probe-' + 'a' * 32) / 'journal.json')].pop(field)
                     with self.assertRaises(RuntimeError):
                         live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
                     states[str(base / ('probe-' + 'a' * 32) / 'journal.json')][field] = saved
-                states[str(base / ('probe-' + 'a' * 32) / 'journal.json')]['directory_identity'] = [9, 9]
-                result = live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
-                self.assertEqual('a' * 32, result['nonce'])
-                self.assertEqual(str(base / ('probe-' + 'a' * 32)), result['directory'])
+                state = states[str(base / ('probe-' + 'a' * 32) / 'journal.json')]
+                expected = state['directory_identity'][:]
+                for identity in (None, [], [expected[0] + 1, expected[1]],
+                                 [expected[0], expected[1] + 1], [9, 9],
+                                 [str(expected[0]), str(expected[1])],
+                                 [True, expected[1]], {'device': expected[0]}, [*expected, 3]):
+                    state['directory_identity'] = identity
+                    before = copy.deepcopy(state)
+                    with self.subTest(identity=identity), self.assertRaisesRegex(RuntimeError, 'UNRESOLVED'):
+                        live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                    self.assertEqual(before, state)  # never repair original evidence
+                del state['directory_identity']
+                with self.assertRaisesRegex(RuntimeError, 'UNRESOLVED'):
+                    live.locate_attempt(base, {'key': 'parallel-a', 'nonce': 'a' * 32})
+                self.assertNotIn('directory_identity', state)
                 with self.assertRaises(FileNotFoundError):
                     live.locate_attempt(base, {'key': 'serial', 'nonce': 'd' * 32})
 

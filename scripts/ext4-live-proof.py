@@ -215,15 +215,10 @@ def locate_attempt(base, attempt):
             or state.get('directory') != str(directory)):
         raise RuntimeError('Exact attempt journal identity mismatch; retained state unresolved')
     identity = state.get('directory_identity')
-    if identity is not None:
-        try:
-            raw = [int(identity[0]), int(identity[1])]
-        except (TypeError, ValueError, IndexError):
-            raise RuntimeError('Exact attempt journal identity mismatch; retained state unresolved')
-        if raw != [info.st_dev, info.st_ino]:
-            # This is the retained exact probe directory for this nonce, so a stale or tuple-typed
-            # directory_identity in the journal is recoverable without broadening the trust boundary.
-            state['directory_identity'] = [info.st_dev, info.st_ino]
+    if (not isinstance(identity, list) or len(identity) != 2
+            or any(type(value) is not int for value in identity)
+            or identity != [info.st_dev, info.st_ino]):
+        raise RuntimeError('Exact attempt directory identity mismatch; retained state UNRESOLVED')
     return state
 
 
