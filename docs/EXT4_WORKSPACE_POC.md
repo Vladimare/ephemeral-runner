@@ -170,10 +170,16 @@ Phase A passed on exact implementation head
 [unit CI](https://github.com/Vladimare/ephemeral-runner/actions/runs/42514003919)
 and [opt-in Linux proof](https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690)
 are successful on that same head. Artifact **13631130445** contains
-`ext4-live-evidence.json`. The [maintainer's downloaded-artifact audit](https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193)
+`ext4-live-evidence.json`. The [independent detailed artifact review](https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769)
 reports serial and parallel probes, byte/inode ENOSPC, backing/loop bounds,
 readonly/cgroup/mount constraints, observed overlap and independent cleanup PASS.
-This documentation update independently verified run/head/artifact metadata;
+The durable JSON summary distinguishes the accepted inode ceiling (2,048) from
+observed statfs inodes (1,024) and files created before inode ENOSPC (1,013).
+It also preserves kernel, runner image revision, Docker/cgroup version,
+immutable image IDs, logical/allocated backing bytes, actual filesystem bytes
+and the artifact digest confirmed by the [final evidence review](https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819503509),
+so compact provenance survives artifact expiration.
+The previous documentation update independently verified run/head/artifact metadata;
 it does not constitute a new independent examination of the raw artifact.
 Historical allocation and mount-policy failures remain in the machine-readable
 report as earlier attempts, not current outcomes.

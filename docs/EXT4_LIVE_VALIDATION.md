@@ -3,8 +3,11 @@
 **Phase A offline component proof PASS; production remains NO-GO.** See the
 [verification summary](examples/ext4-poc-report.json) for exact head, successful
 run **42514199690**, artifact **13631130445**, historical failures and limitations.
-The maintainer's downloaded-artifact audit reports serial/parallel ENOSPC,
-isolation, overlap and independent cleanup PASS. The workflow remains dormant
+The [independent detailed artifact review](https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769)
+reports serial/parallel ENOSPC,
+isolation, overlap and independent cleanup PASS. The durable JSON summary
+preserves actual 1,024 inodes / 1,013 files before ENOSPC separately from the
+2,048-inode acceptance ceiling, plus compact hosted provenance and image IDs. The workflow remains dormant
 for ordinary pushes and runs only on deliberate opt-in label events. Keep the
 verified runtime/harness and security checks; do not rerun rootful validation
 for documentation-only changes. Final documentation review remains pending;

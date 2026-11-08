@@ -10,7 +10,7 @@
   "configured_experiment": {
     "backing_bytes": 67108864,
     "requested_inodes": 1024,
-    "maximum_observed_inodes": 2048
+    "maximum_accepted_inodes": 2048
   },
   "local": {
     "python_suite": {
@@ -89,8 +89,9 @@
     "serial_setup": "PASS",
     "cleanup": "PASS including independent harness post-run cleanup proof",
     "evidence_source": {
-      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
-      "scope": "PASS evidence details from maintainer downloaded-artifact audit; run success/head and artifact metadata independently verified through GitHub API during documentation update. Raw artifact not independently inspected in this update."
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769",
+      "scope": "Detailed independent artifact review and follow-up reinspection supply the preserved observations. This documentation update transcribes reviewed evidence, not a new live execution or independent raw-artifact audit.",
+      "provenance_confirmation": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819503509"
     },
     "live_attempts": [
       {
@@ -177,6 +178,41 @@
       "wait_exit_code": "1",
       "stderr": "RuntimeError: Unapproved writable mount: /proc/latency_stats (tmpfs)",
       "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158"
+    },
+    "provenance": {
+      "os": "Ubuntu 24.04",
+      "runner": "ubuntu-24.04",
+      "ImageOS": "ubuntu24",
+      "ImageVersion": "20261101.360.1",
+      "kernel": "7.0.0-1017-azure",
+      "docker_version": "28.0.4",
+      "cgroup_version": 2,
+      "base_id": "sha256:c50d3c257c6c1423bf8ac67965bf2074ec87afa7078462b516beb7db7d0c6485",
+      "poc_id": "sha256:12c54d5640d0b00a7044642b36145cfc298895b50b624b0088daf0388ecd527b",
+      "implementation_head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "artifact_id": 13631130445,
+      "artifact_name": "ext4-live-4bcdf801804aef1f8f81f66ba3892b511f2fcc99-42514199690-1",
+      "artifact_sha256": "95d3352294770adb5ea090e8df323a2c367da0b29cdd26d6e62e5fb727be6049"
+    },
+    "observed_limits": {
+      "scope": "All three attempts: serial, parallel-a, parallel-b",
+      "backing_logical_bytes": 67108864,
+      "pre_format_allocated_bytes": 67108864,
+      "post_format_allocated_bytes": 67112960,
+      "statfs_bytes": 62607360,
+      "observed_inodes": 1024,
+      "inodes_created_before_ENOSPC": 1013,
+      "byte_result": "ENOSPC",
+      "inode_result": "ENOSPC",
+      "memory_max_bytes": 268435456,
+      "memory_swap_max_bytes": 0,
+      "cpu_max": "25000 100000",
+      "pids_max": 64,
+      "wait_exit_code": "0",
+      "OOMKilled": false,
+      "independent_cleanup": "PASS",
+      "container_overlap": "PASS"
     }
   },
   "github_registration": {
@@ -191,8 +227,10 @@
     "status": "Phase A evidence audit complete; final documentation review pending",
     "required_before_merge": true,
     "prior_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5814740938",
-    "phase_a_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
-    "scope": "Offline research artifact only; no merge or deployment performed by this task."
+    "phase_a_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769",
+    "scope": "Offline research artifact only; no merge or deployment performed by this task.",
+    "scope_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
+    "documentation_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819503509"
   },
   "production_integration": {
     "status": "NOT RUN",
