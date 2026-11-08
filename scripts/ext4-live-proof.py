@@ -239,12 +239,14 @@ def locate_attempt(base, attempt):
         nonce = state.get('nonce')
         if not re.fullmatch(r'[a-f0-9]{32}', str(nonce or '')):
             continue
-        exact = (state.get('directory') == str(journal.parent)
-                 and nonce == journal.parent.name.removeprefix('probe-')
-                 and state.get('name') == 'er-ext4-' + nonce)
-        if exact and state.get('directory_identity') == [info.st_dev, info.st_ino]:
+        directory_ok = state.get('directory') == str(journal.parent)
+        nonce_ok = nonce == journal.parent.name.removeprefix('probe-')
+        name_ok = state.get('name') == 'er-ext4-' + nonce
+        identity_ok = state.get('directory_identity') in (None, [info.st_dev, info.st_ino])
+        exact = directory_ok and nonce_ok and name_ok
+        if exact and identity_ok:
             valid.append((journal, state, info))
-        elif exact:
+        elif exact or (directory_ok and nonce_ok):
             fallback.append((journal, state, info))
     candidates = valid or fallback
     if not candidates:
