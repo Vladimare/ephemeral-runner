@@ -1,0 +1,448 @@
+"""Mocked control-plane/fault tests. No Docker, loop, mount or Linux proof here."""
+import copy
+import inspect
+import importlib.util
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+SPEC = importlib.util.spec_from_file_location('ext4_poc', Path(__file__).parents[1]/'scripts/ext4-workspace-poc.py')
+poc = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(poc)
+IMAGE = 'sha256:'+'a'*64
+CID = 'b'*64
+
+
+def container(mount):
+    return {'Id':CID, 'Name':'/test', 'Image':IMAGE,
+            'State':dict(Status='exited', ExitCode=0, OOMKilled=False, Error='', StartedAt='start', FinishedAt='end'),
+            'Config':{'User':'10001:10001','Labels':{poc.LABEL:'nonce'}},
+            'HostConfig':dict(ReadonlyRootfs=True, NetworkMode='none', CgroupnsMode='private',
+                             Privileged=False, IpcMode='private', Memory=256*poc.MIB, MemorySwap=256*poc.MIB,
+                             CpuPeriod=100000, CpuQuota=25000, PidsLimit=64, ShmSize=8*poc.MIB,
+                             CapDrop=['ALL'], CapAdd=None, SecurityOpt=['no-new-privileges:true'],
+                             Tmpfs={'/tmp':poc.TMPFS.split(':',1)[1]},
+                             LogConfig={'Type':'json-file','Config':{'max-size':'1m','max-file':'2'}}),
+            'Mounts':[{'Type':'bind','Source':str(mount),'Destination':'/work','RW':True,'Propagation':'rprivate'}]}
+
+
+class PolicyTests(unittest.TestCase):
+    def test_concurrent_instance_locks_isolate_and_exclude_recovery(self):
+        # Real flock calls on temp files; ownership only is mocked for macOS.
+        original = os.fstat
+        def root_stat(fd):
+            s=original(fd)
+            return SimpleNamespace(st_uid=0,st_mode=s.st_mode,st_nlink=s.st_nlink)
+        with tempfile.TemporaryDirectory() as directory,patch.object(poc.os,'fstat',root_stat):
+            first=Path(directory)/'first.lock'; second=Path(directory)/'second.lock'
+            fd=poc.acquire_lock(first,True)
+            try:
+                with self.assertRaises(BlockingIOError): poc.acquire_lock(first,True)
+                other=poc.acquire_lock(second,True)
+                os.close(other)
+            finally: os.close(fd)
+            recovered=poc.acquire_lock(first,True); os.close(recovered)
+
+    def test_signal_abort_requests_failed_experiment(self):
+        with self.assertRaisesRegex(RuntimeError,'Signal 15'): poc.abort_signal(15,None)
+
+    def test_gate_precedes_any_command(self):
+        for disposable, platform, uid in [(False,'linux',0),(True,'darwin',0),(True,'linux',1000)]:
+            with self.assertRaises(RuntimeError): poc.gate(disposable,platform,uid)
+        poc.gate(True,'linux',0)
+
+    def test_capacity_bytes_and_inodes(self):
+        for size, inodes in [(575*poc.MIB,5000),(600*poc.MIB,4095)]:
+            with self.assertRaises(RuntimeError):
+                poc.capacity(SimpleNamespace(f_bavail=size,f_frsize=1,f_favail=inodes))
+        poc.capacity(SimpleNamespace(f_bavail=576*poc.MIB,f_frsize=1,f_favail=4096))
+
+    def test_unsafe_parents_and_symlinks(self):
+        for mode, uid in [(stat.S_IFLNK|0o700,0),(stat.S_IFDIR|0o777,0),(stat.S_IFDIR|0o700,501)]:
+            with patch.object(Path,'lstat',return_value=SimpleNamespace(st_mode=mode,st_uid=uid)):
+                with self.assertRaises(RuntimeError): poc.private_directory('/private/probe')
+        for path in ['relative','/','/private/../etc']:
+            with self.assertRaises(RuntimeError): poc.private_directory(path)
+
+    def test_backing_rejects_symlink_hardlink_nonroot(self):
+        for mode, uid, links in [(stat.S_IFLNK,0,1),(stat.S_IFREG,0,2),(stat.S_IFREG,501,1)]:
+            with patch.object(poc.os,'lstat',return_value=SimpleNamespace(st_mode=mode,st_uid=uid,st_nlink=links)):
+                with self.assertRaises(RuntimeError): poc.identity('/unused')
+
+    def test_mount_stack_rejected(self):
+        line = '42 1 7:0 / /test rw,nosuid,nodev - ext4 /dev/loop0 rw'
+        self.assertEqual(poc.mount_record(line,'/test')['id'],'42')
+        with self.assertRaises(RuntimeError): poc.mount_record(line+'\n'+line,'/test')
+
+    def test_inspection_rejects_isolation_bypasses(self):
+        base=container('/test')
+        poc.validate_container(base,Path('/test'))
+        mutations = [('ReadonlyRootfs',False),('NetworkMode','host'),('MemorySwap',-1),
+                     ('CapAdd',['SYS_ADMIN']),('Privileged',True),('Devices',[{}]),
+                     ('DeviceRequests',[{}]),('VolumesFrom',['other']),('PidMode','host'),
+                     ('SecurityOpt',[]),('LogConfig',{}),('Tmpfs',{})]
+        for key, value in mutations:
+            c=copy.deepcopy(base); c['HostConfig'][key]=value
+            with self.subTest(key=key), self.assertRaises(RuntimeError): poc.validate_container(c,Path('/test'))
+        for m in [{'Type':'volume','Destination':'/escape','RW':True},
+                  {'Type':'bind','Destination':'/escape','Source':'/','RW':True},
+                  {'Type':'tmpfs','Destination':'/escape','RW':True}]:
+            c=copy.deepcopy(base); c['Mounts'].append(m)
+            with self.assertRaises(RuntimeError): poc.validate_container(c,Path('/test'))
+        for user, volumes in [('0:0',None),('10001:10001',{'/escape':{}})]:
+            c=copy.deepcopy(base); c['Config'].update(User=user,Volumes=volumes)
+            with self.assertRaises(RuntimeError): poc.validate_container(c,Path('/test'))
+
+    def test_image_volumes_and_unavailable_daemon(self):
+        info=dict(OSType='linux',CgroupVersion='2',MemoryLimit=True,SwapLimit=True,
+                  CpuCfsQuota=True,CpuCfsPeriod=True,PidsLimit=True)
+        def run(args):
+            return json.dumps(info if args[1]=='info' else [{'Id':IMAGE,'Config':{'Volumes':{'/escape':{}}}}])
+        with self.assertRaises(RuntimeError): poc.preflight(IMAGE,run)
+        with self.assertRaises(RuntimeError): poc.preflight('mutable:latest',run)
+        with self.assertRaises(OSError): poc.preflight(IMAGE,lambda args: (_ for _ in ()).throw(OSError('offline')))
+
+    def test_mount_policy_handles_docker_managed_files_and_rejects_escape(self):
+        mounts = {
+            '/': ({'ro'}, 'overlay'),
+            '/work': ({'rw', 'nosuid', 'nodev'}, 'ext4'),
+            '/tmp': ({'rw', 'nosuid', 'nodev'}, 'tmpfs'),
+            '/dev/shm': ({'rw', 'nosuid', 'nodev'}, 'tmpfs'),
+            '/etc/hosts': ({'rw'}, 'xfs'),
+            '/etc/hostname': ({'rw'}, 'xfs'),
+            '/etc/resolv.conf': ({'rw'}, 'xfs'),
+        }
+        poc.enforce_mount_policy(mounts, lambda path: False)
+        with self.assertRaisesRegex(RuntimeError, 'Docker-managed file writable'):
+            poc.enforce_mount_policy(mounts, lambda path: path == '/etc/hosts')
+        mounts_with_escape = dict(mounts, **{'/escape': ({'rw'}, 'xfs')})
+        with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /escape'):
+            poc.enforce_mount_policy(mounts_with_escape, lambda path: False)
+
+    def test_exact_docker_masks_require_actual_safety_and_reject_unknowns(self):
+        null = dict(character=True, directory=False, rdev_major=1, rdev_minor=3)
+        regular = dict(character=False, directory=False, rdev_major=0, rdev_minor=0)
+        for path in poc.DOCKER_FILE_MASKS:
+            with self.subTest(path=path):
+                mounts = {path: ({'rw'}, 'tmpfs')}
+                poc.enforce_mount_policy(mounts, lambda _: True, lambda _: null)
+                poc.enforce_mount_policy(mounts, lambda _: False, lambda _: regular)
+                with self.assertRaisesRegex(RuntimeError, 'Unsafe Docker file mask'):
+                    poc.enforce_mount_policy(mounts, lambda _: True, lambda _: regular)
+                with self.assertRaises(RuntimeError):
+                    poc.enforce_mount_policy(mounts, lambda _: True,
+                                             lambda _: dict(null, rdev_minor=5))
+        for path in poc.DOCKER_DIRECTORY_MASKS:
+            directory = dict(regular, directory=True)
+            poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: False, lambda _: directory)
+            with self.assertRaises(RuntimeError):
+                poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: True, lambda _: directory)
+        for path in ('/proc/escape', '/unknown', '/proc/interrupts/escape'):
+            with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount'):
+                poc.enforce_mount_policy({path: ({'rw'}, 'tmpfs')}, lambda _: False, lambda _: null)
+        for writable in (False, True):
+            if writable:
+                with self.assertRaisesRegex(RuntimeError, 'Docker-managed file writable'):
+                    poc.enforce_mount_policy({'/etc/hosts': ({'rw'}, 'ext4')}, lambda _: True)
+            else:
+                poc.enforce_mount_policy({'/etc/hosts': ({'rw'}, 'ext4')}, lambda _: False)
+        self.assertIn(inspect.getsource(poc.mask_facts).strip(), poc.PAYLOAD)
+        self.assertIn('DOCKER_FILE_MASKS =', poc.PAYLOAD)
+        self.assertIn('DOCKER_DIRECTORY_MASKS =', poc.PAYLOAD)
+
+    def test_observed_twelve_mask_fixture_keeps_actual_safety_checks(self):
+        # Exact HostConfig.MaskedPaths from run 42512621158, not a dynamic allowlist.
+        files = {'/proc/interrupts', '/proc/kcore', '/proc/keys', '/proc/latency_stats',
+                 '/proc/timer_list', '/proc/timer_stats', '/proc/sched_debug'}
+        directories = {'/proc/asound', '/proc/acpi', '/proc/scsi', '/sys/firmware',
+                       '/sys/devices/virtual/powercap'}
+        self.assertEqual(files, poc.DOCKER_FILE_MASKS)
+        self.assertEqual(directories, poc.DOCKER_DIRECTORY_MASKS)
+        mounts = {p: ({'rw'}, 'tmpfs') for p in files}
+        mounts.update({p: ({'ro'}, 'tmpfs') for p in directories})
+        def facts(path):
+            return dict(character=path in files, directory=path in directories,
+                        rdev_major=1 if path in files else 0, rdev_minor=3 if path in files else 0)
+        writable = lambda path: path in files
+        poc.enforce_mount_policy(mounts, writable, facts)
+        for path in files:
+            def unsafe(candidate):
+                return dict(character=False, directory=False, rdev_major=0, rdev_minor=0) if candidate == path else facts(candidate)
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'Unsafe Docker file mask'):
+                poc.enforce_mount_policy(mounts, writable, unsafe)
+        for path in directories:
+            changed = dict(mounts, **{path: ({'rw'}, 'tmpfs')})
+            with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, 'Unsafe Docker directory mask'):
+                poc.enforce_mount_policy(changed, lambda candidate: candidate == path or writable(candidate), facts)
+        with self.assertRaisesRegex(RuntimeError, 'Unapproved writable mount: /proc/escape'):
+            poc.enforce_mount_policy(dict(mounts, **{'/proc/escape': ({'rw'}, 'tmpfs')}), writable, facts)
+
+    def test_payload_uses_shared_mount_policy_source(self):
+        self.assertIn(inspect.getsource(poc.enforce_mount_policy).strip(), poc.PAYLOAD)
+        self.assertIn("enforce_mount_policy(mounts, lambda path: os.access(path, os.W_OK))", poc.PAYLOAD)
+
+
+class LifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.calls=[]; self.fail=None; self.live=True; self.attached=True; self.mounted=True
+        self.e=poc.Experiment(self.temp.name,self.fake_run)
+        self.e.logs=lambda _: dict(returncode=0, stdout=json.dumps({'bytes':'ENOSPC','inodes':{'result':'ENOSPC'}}), stderr='', truncated={})
+        self.e.state=dict(schema=1,nonce='nonce',name='test',image_id=IMAGE,container_id=CID,
+                          create_attempted=True,loop='/dev/loop0',loop_rdev=os.makedev(7,0),
+                          mount_id='42',backing_identity=[1,2],pending=None,tests={},evidence={})
+        self.e.image.write_bytes(b'fixture')
+        self.e.verify_backing=lambda: None
+        self.e.verify_loop=lambda: None
+        self.e.verify_mount=lambda: {'line':'mock mountinfo'}
+        self.e.mounts=lambda: ''
+        self.e.loops=lambda: ([{'name':'/dev/loop0','back-file':str(self.e.image),'back-ino':2,
+                               'back-maj:min':'0:1','offset':0,'sizelimit':poc.SIZE}] if self.attached else [])
+
+    def fake_run(self,args):
+        self.calls.append(args)
+        op=' '.join(args[:2])
+        if op==self.fail or args[0]==self.fail: raise RuntimeError('injected '+op)
+        if op=='docker inspect':
+            if not self.live: raise RuntimeError('not found or daemon unavailable')
+            return json.dumps([container(self.e.mount)])
+        if op=='docker rm': self.live=False
+        if args[0]=='umount': self.mounted=False
+        if op=='losetup --detach': self.attached=False
+        if op=='docker create': return CID
+        if op=='docker wait': return '0'
+        if op=='docker logs': return json.dumps({'bytes':'ENOSPC','inodes':{'result':'ENOSPC'}})
+        return ''
+
+    def test_success_cleanup_order_and_repeated_recovery(self):
+        with patch.object(poc,'identity',return_value=[1,2]): self.e.cleanup()
+        self.assertFalse(self.e.image.exists())
+        self.assertEqual([a[0] for a in self.calls],['docker','docker','umount','losetup'])
+        count=len(self.calls); self.e.cleanup()
+        self.assertEqual(len(self.calls),count)
+
+    def test_cleanup_boundary_failures_retain_backing(self):
+        for failure in ['docker inspect','docker rm','umount','losetup --detach']:
+            with self.subTest(failure=failure):
+                self.setUp(); self.fail=failure
+                with patch.object(poc,'identity',return_value=[1,2]), self.assertRaises(RuntimeError): self.e.cleanup()
+                self.assertTrue(self.e.image.exists())
+                self.assertNotIn('unlink',[a[0] for a in self.calls])
+
+    def test_unlink_failure_retains_journal(self):
+        original=Path.unlink
+        def unlink(path,*args,**kwargs):
+            if path==self.e.image: raise OSError('injected unlink')
+            return original(path,*args,**kwargs)
+        with patch.object(poc,'identity',return_value=[1,2]), patch.object(Path,'unlink',unlink):
+            with self.assertRaises(OSError): self.e.cleanup()
+        self.assertEqual(self.e.state['pending'],'unlink')
+        self.assertTrue(self.e.journal.exists())
+
+    def test_ambiguous_attach_mount_kill_reboot_fail_closed(self):
+        for pending in ['attach','mount','remove_container','unmount','detach','unlink']:
+            self.e.state.update(pending=pending,create_attempted=False,container_id=None)
+            with self.subTest(pending=pending), self.assertRaises(RuntimeError): self.e.cleanup()
+            self.assertTrue(self.e.image.exists())
+        self.assertEqual(self.calls,[])
+
+    def test_timeout_after_remote_create_reconciles_exact_identity(self):
+        self.e.state.update(pending='create',container_id=None)
+        with patch.object(poc,'identity',return_value=[1,2]): self.e.cleanup()
+        self.assertIn(['docker','rm','-f',CID],self.calls)
+
+    def test_id_reuse_name_collision_and_unknown_ownership(self):
+        original=self.e.run
+        for key,value in [('Id','c'*64),('Name','/collision'),('Image','sha256:'+'d'*64),('Config',{'Labels':{poc.LABEL:'other'}})]:
+            c=container(self.e.mount); c[key]=value
+            self.e.run=lambda args: json.dumps([c])
+            with self.subTest(key=key),self.assertRaises(RuntimeError): self.e.cleanup()
+            self.assertTrue(self.e.image.exists())
+        self.e.run=original
+
+    def test_unknown_backing_and_attached_file_never_unlinked(self):
+        self.e.state.update(create_attempted=False,container_id=None,loop=None,mount_id=None)
+        with patch.object(poc,'identity',return_value=[9,9]),self.assertRaises(RuntimeError): self.e.cleanup()
+        with patch.object(poc,'identity',return_value=[1,2]),self.assertRaises(RuntimeError): self.e.cleanup()
+        self.assertTrue(self.e.image.exists())
+
+    def test_changed_loop_backing_and_reused_device(self):
+        for mutation in [{'back-ino':999},{'back-maj:min':'8:0'},{'offset':4096},{'sizelimit':0},{'back-file':'/unrelated'}]:
+            x=self.e.loops()[0]; x.update(mutation)
+            with patch.object(self.e,'loops',return_value=[x]),self.assertRaises(RuntimeError):
+                poc.Experiment.verify_loop(self.e)
+        with patch.object(poc.os,'stat',return_value=SimpleNamespace(st_mode=stat.S_IFBLK,st_rdev=os.makedev(7,1))):
+            # Use a valid recorded major/minor for the mock backing dev.
+            self.e.state['backing_identity']=[1,2]
+            with self.assertRaises(RuntimeError): poc.Experiment.verify_loop(self.e)
+
+    def test_changed_mount_id_device_flags_and_busy_reference(self):
+        for line in ['43 1 7:0 / {p} rw,nosuid,nodev - ext4 /dev/loop0 rw',
+                     '42 1 7:1 / {p} rw,nosuid,nodev - ext4 /dev/loop1 rw',
+                     '42 1 7:0 / {p} rw - ext4 /dev/loop0 rw']:
+            with patch.object(self.e,'mounts',return_value=line.format(p=self.e.mount)):
+                with self.assertRaises(RuntimeError): poc.Experiment.verify_mount(self.e)
+        self.e.state.update(create_attempted=False,container_id=None,mount_id=None)
+        self.e.mounts=lambda:'42 1 7:0 / /other rw - ext4 /dev/loop0 rw'
+        with self.assertRaisesRegex(RuntimeError,'remains mounted'): self.e.cleanup()
+        self.assertTrue(self.e.image.exists())
+
+    def test_mocked_probe_success_records_observed_separately(self):
+        with patch.object(poc,'identity',return_value=[1,2]): self.e.launch()
+        self.assertEqual(self.e.state['tests']['linux_enforcement'],'PASS')
+        self.assertEqual(self.e.state['evidence']['probe']['bytes'],'ENOSPC')
+        self.assertIn('docker_inspect',self.e.state['evidence'])
+
+    def test_start_wait_and_create_faults(self):
+        for failure in ['docker create','docker start','docker wait']:
+            self.fail=failure
+            with self.subTest(failure=failure),self.assertRaises(RuntimeError): self.e.launch()
+            self.assertTrue(self.e.image.exists())
+
+    def test_setup_fault_boundaries(self):
+        # Mock only OS primitives requiring root/Linux; use actual temp files and journal.
+        for fail in ['allocate','mkfs.ext4','losetup','mount']:
+            with self.subTest(fail=fail),tempfile.TemporaryDirectory() as directory:
+                calls=[]
+                def run(args):
+                    calls.append(args)
+                    if args[0]==fail: raise RuntimeError('injected '+fail)
+                    return '/dev/loop0' if args[0]=='losetup' else ''
+                e=poc.Experiment(directory,run); e.state={'evidence':{},'tests':{}}
+                e.verify_backing=lambda: None; e.verify_loop=lambda:None
+                def allocate(*args):
+                    if fail=='allocate': raise OSError('injected allocation ENOSPC')
+                with patch.object(poc,'identity',return_value=[1,2]),patch.object(poc.os,'posix_fallocate',allocate,create=True),patch.object(poc.os,'stat',return_value=SimpleNamespace(st_rdev=os.makedev(7,0))):
+                    with self.assertRaises((OSError,RuntimeError)): e.setup()
+                self.assertTrue(e.journal.exists())
+                self.assertEqual(e.state['pending'],{'allocate':'allocate','mkfs.ext4':'format','losetup':'attach','mount':'mount'}[fail])
+
+    def test_format_preserves_allocation_contract_and_records_diagnostics(self):
+        for deallocates in (False, True):
+            with self.subTest(deallocates=deallocates), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                formatted = False
+                def run(args):
+                    nonlocal formatted
+                    calls.append(args)
+                    if args[0] == 'mkfs.ext4':
+                        formatted = True
+                        return ''
+                    raise RuntimeError('stop before real attach')
+                e = poc.Experiment(directory, run)
+                e.state = {'evidence': {}, 'tests': {}}
+                def facts():
+                    return dict(st_size=poc.SIZE, allocated_bytes=4096 if formatted and deallocates else poc.SIZE,
+                                uid=0, mode=0o600, nlink=1, device=1, inode=2, regular=True)
+                with patch.object(poc, 'identity', return_value=[1, 2]), \
+                        patch.object(poc.os, 'posix_fallocate', create=True) as allocate, \
+                        patch.object(e, 'backing_facts', side_effect=facts):
+                    with self.assertRaisesRegex(RuntimeError, 'allocation' if deallocates else 'stop before real attach'):
+                        e.setup()
+                    allocate.assert_called_once()
+                mkfs = next(args for args in calls if args[0] == 'mkfs.ext4')
+                self.assertEqual('nodiscard,lazy_itable_init=0,lazy_journal_init=0', mkfs[mkfs.index('-E') + 1])
+                saved = json.loads(e.journal.read_text())
+                checks = saved['evidence']['backing_checks']
+                self.assertEqual(poc.SIZE, checks['pre_format']['allocated_bytes'])
+                self.assertEqual(4096 if deallocates else poc.SIZE, checks['post_format_pre_attach']['allocated_bytes'])
+                self.assertEqual(['mkfs.ext4'] if deallocates else ['mkfs.ext4', 'losetup'], [c[0] for c in calls])
+                if deallocates:
+                    self.assertEqual(['allocation'], saved['evidence']['backing_verification_failure']['failed_predicates'])
+                    self.assertEqual('format', saved['pending'])
+                    self.assertTrue(e.image.exists())
+
+    def test_backing_facts_and_each_failed_predicate_are_retained(self):
+        actual = self.e.backing_facts()
+        st = self.e.image.lstat()
+        self.assertEqual(st.st_blocks * 512, actual['allocated_bytes'])
+        self.assertEqual(st.st_ino, actual['inode'])
+        good = dict(st_size=poc.SIZE, allocated_bytes=poc.SIZE, uid=0, mode=0o600,
+                    nlink=1, device=1, inode=2, regular=True)
+        for predicate, field, value in [('regular', 'regular', False), ('uid', 'uid', 1000),
+                ('nlink', 'nlink', 2), ('identity', 'inode', 3), ('size', 'st_size', 1),
+                ('allocation', 'allocated_bytes', poc.SIZE - 1), ('mode', 'mode', 0o644)]:
+            with self.subTest(predicate=predicate), patch.object(self.e, 'backing_facts', return_value=dict(good, **{field: value})):
+                with self.assertRaisesRegex(RuntimeError, predicate):
+                    poc.Experiment.verify_backing(self.e)
+                saved = json.loads(self.e.journal.read_text())
+                self.assertEqual([predicate], saved['evidence']['backing_verification_failure']['failed_predicates'])
+
+    def test_post_wait_failure_survives_cleanup_and_sanitization(self):
+        import test_ext4_live
+        original = self.fake_run
+        def run(args):
+            if args[:2] == ['docker', 'wait']: return '1'
+            if args[:4] == ['docker', 'inspect', '--type', 'container'] and args[-1] == CID:
+                c = container(self.e.mount)
+                c['State'].update(ExitCode=1, OOMKilled=True)
+                return json.dumps([c])
+            if args[:2] == ['docker', 'rm']:
+                saved = json.loads(self.e.journal.read_text())
+                self.assertEqual('1', saved['evidence']['post_wait']['wait_exit_code'])
+                self.assertIn('Traceback', saved['evidence']['post_wait']['logs']['stderr'])
+            return original(args)
+        self.e.run = run
+        self.e.logs=lambda _: dict(returncode=0, stdout='', stderr='Traceback: assertion failed', truncated={})
+        with self.assertRaisesRegex(RuntimeError, 'docker wait=1'): self.e.launch()
+        with patch.object(poc, 'identity', return_value=[1,2]): self.e.cleanup()
+        evidence = test_ext4_live.live.sanitize_state(json.loads(self.e.journal.read_text()))['evidence']
+        self.assertTrue(evidence['post_wait']['state']['OOMKilled'])
+        self.assertIn('Traceback', evidence['post_wait']['logs']['stderr'])
+
+    def test_empty_then_delayed_logs_and_success_json(self):
+        empty = dict(returncode=0, stdout='', stderr='', truncated={})
+        output = self.e.logs(CID)
+        with patch.object(self.e, 'logs', side_effect=[empty, output]), patch.object(poc.time, 'sleep'), \
+                patch.object(poc, 'identity', return_value=[1,2]):
+            self.e.launch()
+        self.assertEqual(2, self.e.state['evidence']['post_wait']['log_attempts'])
+        self.assertEqual('PASS', self.e.state['tests']['linux_enforcement'])
+
+    def test_empty_logs_and_diagnostic_failures_retain_wait_code(self):
+        for failure in ('empty', 'logs', 'inspect', 'ownership'):
+            with self.subTest(failure=failure):
+                original = self.fake_run
+                def run(args):
+                    if args[:2] == ['docker', 'wait']: return '1'
+                    if args[-1] == CID and args[:2] == ['docker', 'inspect']:
+                        if failure == 'inspect': raise RuntimeError('daemon unavailable')
+                        c = container(self.e.mount)
+                        if failure == 'ownership': c['Image'] = 'wrong'
+                        return json.dumps([c])
+                    return original(args)
+                self.e.run = run
+                self.e.logs=lambda _: dict(returncode=0, stdout='', stderr='', truncated={})
+                if failure == 'logs': self.e.logs=lambda _: (_ for _ in ()).throw(OSError('logs unavailable'))
+                with patch.object(poc.time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'docker wait=1'):
+                    self.e.launch()
+                saved=json.loads(self.e.journal.read_text())['evidence']['post_wait']
+                self.assertEqual('1', saved['wait_exit_code'])
+                self.assertTrue(saved['errors'])
+                self.assertNotEqual('PASS', saved['status'])
+
+    def test_real_log_capture_keeps_stderr_caps_and_redacts(self):
+        original = subprocess.Popen
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'fake.py'
+            fake.write_text("import sys\nprint('x'*20000)\nprint('Traceback ghp_private',file=sys.stderr)\n")
+            def popen(args, **kwargs):
+                self.assertEqual(['logs','--tail','100',CID], args[-4:])
+                return original([sys.executable, str(fake)], **kwargs)
+            with patch.object(poc.subprocess, 'Popen', side_effect=popen):
+                logs=poc.capture_logs(CID)
+            self.assertEqual(16384, len(logs['stdout']))
+            self.assertTrue(logs['truncated']['stdout'])
+            self.assertIn('Traceback', logs['stderr'])
+            self.assertNotIn('ghp_private', logs['stderr'])
+
+
+if __name__=='__main__': unittest.main()

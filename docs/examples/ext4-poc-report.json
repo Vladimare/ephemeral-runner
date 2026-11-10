@@ -1,0 +1,239 @@
+{
+  "schema": 1,
+  "kind": "sanitized-verification-summary",
+  "baseline": "3c944324c750c1db439380690c4f6889841579fb",
+  "decision": "NO-GO for production; Phase A offline component proof PASS",
+  "environment": {
+    "os": "macOS",
+    "python": "3.14.7"
+  },
+  "configured_experiment": {
+    "backing_bytes": 67108864,
+    "requested_inodes": 1024,
+    "maximum_accepted_inodes": 2048
+  },
+  "local": {
+    "python_suite": {
+      "status": "PASS",
+      "command": "python3 -m unittest discover -s tests",
+      "tests": 118,
+      "new_poc_tests": 31,
+      "live_harness_tests": 22
+    },
+    "bash_syntax": {
+      "status": "PASS",
+      "command": "for file in scripts/*.sh docker/entrypoint.sh; do bash -n \"$file\" || exit 1; done"
+    },
+    "ungated_cli": {
+      "status": "PASS",
+      "exit_code": 1,
+      "stderr": "Require --disposable-host and root on disposable Linux; no setup attempted"
+    },
+    "fault_injection": {
+      "status": "PASS",
+      "evidence_type": "mocked OS/Docker responses and temporary files; real local flock calls",
+      "cases": [
+        "allocation ENOSPC",
+        "format",
+        "attach",
+        "mount",
+        "create/start/wait",
+        "unmount busy",
+        "detach",
+        "unlink",
+        "daemon unavailable",
+        "create-then-timeout",
+        "backing/loop/mount/container identity changes",
+        "unsafe parent and symlink",
+        "conflicting name and ID reuse",
+        "interrupted lifecycle intent",
+        "repeated recovery",
+        "independent instance locks"
+      ]
+    },
+    "workflow_lint": {
+      "status": "PASS",
+      "command": "actionlint -shellcheck= .github/workflows/ext4-live-proof.yml",
+      "version": "1.7.7",
+      "scope": "static YAML/expression validation only; ShellCheck not installed; separate live attempts are recorded below"
+    }
+  },
+  "disposable_linux": {
+    "status": "PASS",
+    "reason": "Phase A offline component proof passed on the exact implementation head; artifact inspection results attributed to linked maintainer audit. No production or real runner acceptance.",
+    "byte_enospc": "PASS",
+    "inode_enospc": "PASS",
+    "backing_allocation_and_fixed_size": "PASS",
+    "docker_isolation_and_layout": "PASS (offline layout smoke only; no runner execution)",
+    "sigterm_sigkill_daemon_outage_busy_mount_reboot": "NOT RUN",
+    "two_overlapping_probes": "PASS",
+    "evidence": {
+      "source": "ext4-live-evidence.json",
+      "artifact_id": 13631130445,
+      "artifact_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690/artifacts/13631130445",
+      "scope": "Serial and parallel probes: byte/inode ENOSPC, backing/loop bounds, readonly/cgroup/mount constraints, actual overlap, cleanup. Raw observations remain in sanitized artifact."
+    },
+    "opt_in_workflow": {
+      "status": "PASS",
+      "path": ".github/workflows/ext4-live-proof.yml",
+      "pr": 16,
+      "label": "ext4-live-proof",
+      "head_source": "same-repository event pull_request.head.sha",
+      "runner": "ubuntu-24.04",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "artifact": "ext4-live-evidence.json",
+      "artifact_id": 13631130445,
+      "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "artifact_digest": "sha256:95d3352294770adb5ea090e8df323a2c367da0b29cdd26d6e62e5fb727be6049"
+    },
+    "serial_setup": "PASS",
+    "cleanup": "PASS including independent harness post-run cleanup proof",
+    "evidence_source": {
+      "url": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769",
+      "scope": "Detailed independent artifact review and follow-up reinspection supply the preserved observations. This documentation update transcribes reviewed evidence, not a new live execution or independent raw-artifact audit.",
+      "provenance_confirmation": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819503509"
+    },
+    "live_attempts": [
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42411625309",
+        "head_prefix": "6ba12a3",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415148790",
+        "head_prefix": "8e1a31c",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42415965257",
+        "head_prefix": "8e1a31c",
+        "status": "FAIL",
+        "stage": "serial setup before container creation"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42490486414",
+        "head_prefix": "bd354a2",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491017883",
+        "head_prefix": "c5cbd8d",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42491373144",
+        "head_prefix": "9b82878",
+        "status": "FAIL",
+        "stage": "serial execution after Docker start/wait; exact cause unknown"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42511506424",
+        "head_prefix": "0425e201",
+        "status": "FAIL",
+        "stage": "mount_policy: Unapproved writable mount: /proc/interrupts (tmpfs)"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158",
+        "head_prefix": "da61e5f",
+        "status": "FAIL",
+        "stage": "mount_policy: Unapproved writable mount: /proc/latency_stats (tmpfs)"
+      },
+      {
+        "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+        "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+        "status": "PASS",
+        "stage": "Phase A serial and parallel offline component proof",
+        "artifact_id": 13631130445
+      }
+    ],
+    "fix_validation": {
+      "status": "PASS",
+      "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "scope": "Phase A offline proof only; documentation-only update does not rerun privileged validation."
+    },
+    "serial_execution": "PASS",
+    "head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+    "historical_failed_journal": {
+      "pre_format_allocated_bytes": 67108864,
+      "post_format_allocated_bytes": 67112960,
+      "st_size": 67108864,
+      "linux_enforcement": "FAIL",
+      "cleanup": "PASS",
+      "cleanup_failure": null,
+      "failure": "Probe failed: ",
+      "loop": null,
+      "mount_id": null,
+      "container_id": null,
+      "post_wait_state": {
+        "Status": "exited",
+        "ExitCode": 1,
+        "OOMKilled": false,
+        "Error": ""
+      },
+      "wait_exit_code": "1",
+      "stderr": "RuntimeError: Unapproved writable mount: /proc/latency_stats (tmpfs)",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42512621158"
+    },
+    "provenance": {
+      "os": "Ubuntu 24.04",
+      "runner": "ubuntu-24.04",
+      "ImageOS": "ubuntu24",
+      "ImageVersion": "20261101.360.1",
+      "kernel": "7.0.0-1017-azure",
+      "docker_version": "28.0.4",
+      "cgroup_version": 2,
+      "base_id": "sha256:c50d3c257c6c1423bf8ac67965bf2074ec87afa7078462b516beb7db7d0c6485",
+      "poc_id": "sha256:12c54d5640d0b00a7044642b36145cfc298895b50b624b0088daf0388ecd527b",
+      "implementation_head": "4bcdf801804aef1f8f81f66ba3892b511f2fcc99",
+      "run_url": "https://github.com/Vladimare/ephemeral-runner/actions/runs/42514199690",
+      "artifact_id": 13631130445,
+      "artifact_name": "ext4-live-4bcdf801804aef1f8f81f66ba3892b511f2fcc99-42514199690-1",
+      "artifact_sha256": "95d3352294770adb5ea090e8df323a2c367da0b29cdd26d6e62e5fb727be6049"
+    },
+    "observed_limits": {
+      "scope": "All three attempts: serial, parallel-a, parallel-b",
+      "backing_logical_bytes": 67108864,
+      "pre_format_allocated_bytes": 67108864,
+      "post_format_allocated_bytes": 67112960,
+      "statfs_bytes": 62607360,
+      "observed_inodes": 1024,
+      "inodes_created_before_ENOSPC": 1013,
+      "byte_result": "ENOSPC",
+      "inode_result": "ENOSPC",
+      "memory_max_bytes": 268435456,
+      "memory_swap_max_bytes": 0,
+      "cpu_max": "25000 100000",
+      "pids_max": 64,
+      "wait_exit_code": "0",
+      "OOMKilled": false,
+      "independent_cleanup": "PASS",
+      "container_overlap": "PASS"
+    }
+  },
+  "github_registration": {
+    "status": "NOT RUN",
+    "reason": "Forbidden for this PoC; no credentials or registration calls used."
+  },
+  "deployment": {
+    "status": "NOT RUN",
+    "reason": "Existing deployed runners and Docker hosts remain outside scope and untouched."
+  },
+  "independent_architecture_security_review": {
+    "status": "Phase A evidence audit complete; final documentation review pending",
+    "required_before_merge": true,
+    "prior_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5814740938",
+    "phase_a_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819304769",
+    "scope": "Offline research artifact only; no merge or deployment performed by this task.",
+    "scope_audit": "https://github.com/Vladimare/ephemeral-runner/pull/16#issuecomment-6726048193",
+    "documentation_review": "https://github.com/Vladimare/ephemeral-runner/pull/16#pullrequestreview-5819503509"
+  },
+  "production_integration": {
+    "status": "NOT RUN",
+    "decision": "NO-GO for production"
+  }
+}

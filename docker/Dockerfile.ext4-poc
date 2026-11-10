@@ -1,0 +1,13 @@
+# Build only on the disposable test host, from an already loaded trusted image.
+# Example: docker build --pull=false --network=none --build-arg BASE=sha256:... \
+#   -f docker/Dockerfile.ext4-poc -t er-ext4-poc .
+ARG BASE
+FROM ${BASE}
+USER root
+RUN mkdir -p /opt && mv /home/runner/actions-runner /opt/actions-runner \
+    && chown -R 0:0 /opt/actions-runner && chmod -R a+rX /opt/actions-runner
+USER 10001:10001
+WORKDIR /opt/actions-runner
+# The experiment overrides this. No production entrypoint or registration.
+ENTRYPOINT ["python3"]
+CMD ["-c", "print('offline layout fixture only')"]
