@@ -93,6 +93,12 @@ Existing deployments are never automatically migrated.
 
 ## Operations
 
+Read [planned maintenance and forced shutdown](docs/MAINTENANCE.md) before stopping,
+upgrading or retiring a runner. A GitHub Idle snapshot races with job assignment.
+The new maintenance gate waits for natural exit and may wait indefinitely for an
+idle runner; forced shutdown is a separate operator decision. Live Linux lifecycle
+acceptance remains outstanding under [Issue #10](https://github.com/Vladimare/ephemeral-runner/issues/10).
+
 ```bash
 systemctl status ephemeral-runner@example.service
 sudo journalctl -u ephemeral-runner@example.service -f
@@ -100,12 +106,11 @@ sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py -
 sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --sweep --dry-run
 sudo /usr/local/libexec/ephemeral-runner/releases/v1/scripts/runner-cleanup.py --instance example --sweep
 
-# ONLY when the runner is Idle in GitHub:
-sudo systemctl stop ephemeral-runner@example.service
-sudo systemctl start ephemeral-runner@example.service
+# Planned maintenance: follow docs/MAINTENANCE.md; do not stop a busy/idle runner
+# based only on a GitHub Idle snapshot.
 ```
 
-Expected idle state: `systemctl is-active` returns `active`, one `Idle` registration on GitHub. On job completion: runner unregisters itself, container is removed, systemd restarts after 15 seconds. On intentional stop: `docker stop` sends SIGTERM to the runner; the host cleanup verifies API deletion and clears state. Docker may report 143 (128 + SIGTERM), whitelisted in `SuccessExitStatus=143`; code 137 remains a failure.
+Expected idle state: `systemctl is-active` returns `active`, one `Idle` registration on GitHub. On job completion: runner unregisters itself, container is removed, systemd restarts after 60 seconds unless maintenance is armed. Outside maintenance, intentional stop uses forced cleanup and can cancel a job. State clears only after offline/idle deletion and absence are confirmed. Docker may report 143 (128 + SIGTERM), whitelisted in `SuccessExitStatus=143`; code 137 remains a failure.
 
 The cleanup timer sweeps orphan registrations after crashes and reboots, and tolerates GitHub responses that omit the `ephemeral` field. It fails closed on unknown Docker errors and preserves the current-name file if GitHub deletion cannot be confirmed.
 
@@ -119,12 +124,13 @@ same command. Configuration, PAT, image selection, labels and state remain intac
 
 ```bash
 sudo ./scripts/install.sh runtime-install --version v2
-# Only after verifying GitHub reports Idle; stopping a busy runner cancels its job:
+# First complete docs/MAINTENANCE.md and obtain READY; stop/restart can cancel jobs:
 sudo systemctl stop ephemeral-runner-cleanup@example.timer ephemeral-runner@example.service ephemeral-runner-cleanup@example.service
 sudo ./scripts/install.sh upgrade --instance example --version v2
 # Roll back while still stopped, if needed:
 sudo ./scripts/install.sh upgrade --instance example --version v1
-# Explicit operator action, after verification:
+# Follow docs/MAINTENANCE.md to --resume using the selected supporting release.
+# Explicit operator action after gate removal and reset-failed:
 sudo systemctl start ephemeral-runner@example.service ephemeral-runner-cleanup@example.timer
 ```
 
@@ -155,7 +161,7 @@ or recovered credentials blindly. Recovery is idempotent and never deletes runne
 state. Power-loss guarantees depend on local filesystem rename/fsync semantics;
 validate on the intended Linux filesystem before production deployment.
 
-When retiring an instance, stop it when Idle, audit/sweep registrations, disable
+When retiring an instance, obtain READY through planned maintenance, audit/sweep registrations, disable
 its service/timer and revoke its PAT. This tooling does not modify or migrate the
 existing deployed runner.
 
