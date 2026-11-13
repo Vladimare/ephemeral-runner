@@ -62,6 +62,7 @@ class CleanupTests(unittest.TestCase):
             filename.write_text(self.name)
             with patch.object(mod.Config, 'state', property(lambda _: filename)), \
                     patch.object(mod, 'stop_container'), \
+                    patch.object(mod, 'docker_exists', return_value=False), \
                     patch.object(mod, 'runners', return_value=[self.record()]), \
                     patch.object(mod, 'delete', side_effect=RuntimeError('403')):
                 with self.assertRaises(RuntimeError):
@@ -74,6 +75,7 @@ class CleanupTests(unittest.TestCase):
             filename.write_text(self.name)
             with patch.object(mod.Config, 'state', property(lambda _: filename)), \
                     patch.object(mod, 'stop_container'), \
+                    patch.object(mod, 'docker_exists', return_value=False), \
                     patch.object(mod, 'runners', side_effect=[[self.record()], []]), \
                     patch.object(mod, 'delete', return_value=True) as delete:
                 mod.current(self.cfg, dry_run=False)
