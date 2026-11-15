@@ -2,12 +2,12 @@
 
 Repository-configurable, disposable GitHub Actions runners in Linux Docker containers. Each instance targets one `OWNER/REPO`, runs at most one GitHub Actions job, then disposes its container; systemd automatically starts a fresh runner. A repository-scoped host-side cleanup removes stale registrations after shutdown or power loss.
 
-**Status:** Reusable implementation with transactional installation, private-file validation and per-instance resource policies. Python regression tests and per-file shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use.
+**Status:** Reusable implementation with transactional installation, private-file validation and per-instance resource policies. Python regression tests and per-file shell syntax checks are included. The generic image, installer, systemd integration and network policy require validation on your own host before production use. The disposable-host network verification gate is tracked in [issue #11](https://github.com/Vladimare/ephemeral-runner/issues/11); it remains an operator-run check and not a claim that the Docker bridge itself is isolated.
 
 ## Requirements
 
 - Linux `x86_64`, systemd, Docker Engine, bash, Python 3, curl; root for installing/running the service.
-- A **dedicated Docker bridge network** whose outbound and host/LAN access you have restricted. `docker network create er-ci` creates a bridge but **does not secure it**. See [network security](docs/NETWORK_SECURITY.md).
+- A **dedicated Docker bridge network** whose outbound and host/LAN access you have restricted. `docker network create er-ci` creates a bridge but **does not secure it**. See [network security](docs/NETWORK_SECURITY.md) and the disposable-host verification gate in issue #11 before production use.
 - A fine-grained GitHub PAT limited to the target repository with repository **Administration (read/write)**; obtain it in GitHub Settings. This token is needed to create registration tokens and delete orphaned runners.
 - A pinned Docker image containing the GitHub Actions runner at `/home/runner/actions-runner`, owned by UID `10001`. The provided Dockerfile is a minimal Linux x64 example; project-specific toolchains should be added in a derived image. GitHub may require runner image updates to continue accepting jobs.
 
