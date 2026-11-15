@@ -1,0 +1,212 @@
+{
+  "checks": [
+    {
+      "detail": "Current runner image requires local Linux x86_64",
+      "name": "platform",
+      "observed": {
+        "architecture": "x86_64",
+        "kernel": "6.8.0-generic",
+        "system": "Linux"
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "Distribution metadata only",
+      "name": "os_release",
+      "observed": {
+        "ID": "ubuntu",
+        "VERSION_ID": "24.04"
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_bash",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_python3",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_curl",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_docker",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_systemctl",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_findmnt",
+      "status": "PASS"
+    },
+    {
+      "detail": "Required userspace executable present",
+      "name": "tool_install",
+      "status": "PASS"
+    },
+    {
+      "detail": "PID 1 must be systemd; no units loaded or changed",
+      "name": "systemd",
+      "observed": "systemd 255 (255.4-1ubuntu8)",
+      "status": "PASS"
+    },
+    {
+      "detail": "Controllers visible in local hierarchy; delegation/enforcement still untested",
+      "name": "cgroup_v2",
+      "observed": [
+        "cpu",
+        "io",
+        "memory",
+        "pids"
+      ],
+      "status": "PASS"
+    },
+    {
+      "detail": "Readable in diagnostic process cgroup; not a job-container limit",
+      "name": "memory_swap_interface",
+      "observed": "max",
+      "status": "PASS"
+    },
+    {
+      "detail": "Available bytes observed; no workload capacity guarantee",
+      "name": "available_memory",
+      "observed": 4294967296,
+      "status": "PASS"
+    },
+    {
+      "detail": "Local rootful Linux x64 daemon required",
+      "name": "docker_server",
+      "observed": "28.0.4",
+      "status": "PASS"
+    },
+    {
+      "detail": "Daemon advertised capabilities, not observed container enforcement",
+      "name": "docker_cgroup_support",
+      "observed": {
+        "CpuCfsPeriod": true,
+        "CpuCfsQuota": true,
+        "MemoryLimit": true,
+        "PidsLimit": true,
+        "SwapLimit": true
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "Production backend requires overlay2 on XFS; ext4/btrfs are unsupported",
+      "name": "docker_storage",
+      "observed": {
+        "backing_filesystem": "xfs",
+        "driver": "overlay2"
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "XFS mount advertises project quota enforcement; live quota test still required",
+      "name": "xfs_project_quota",
+      "status": "PASS"
+    },
+    {
+      "detail": "Free bytes on local Docker data filesystem; no reservation guarantee",
+      "name": "available_docker_disk",
+      "observed": 32212254720,
+      "status": "PASS"
+    },
+    {
+      "detail": "Inventory counts only; names, IDs and subnets omitted",
+      "name": "docker_network_inventory",
+      "observed": {
+        "bridge": 1,
+        "total": 1
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "Selected network shape only; a bridge does not prove isolation",
+      "name": "runner_network",
+      "observed": {
+        "ipv6_enabled": true
+      },
+      "status": "PASS"
+    },
+    {
+      "detail": "Frontend identity only; not Docker backend or enforcement",
+      "name": "ipv4_firewall_frontend",
+      "observed": "iptables v1.8.10 (nf_tables)",
+      "status": "PASS"
+    },
+    {
+      "detail": "Frontend identity only; not Docker backend or enforcement",
+      "name": "ipv6_firewall_frontend",
+      "observed": "ip6tables v1.8.10 (nf_tables)",
+      "status": "PASS"
+    },
+    {
+      "detail": "nft executable identity only",
+      "name": "nft_userspace",
+      "observed": "nftables v1.0.9 (Old Doc Yak)",
+      "status": "PASS"
+    },
+    {
+      "detail": "Not inferred from frontend versions; verify daemon configuration and live chain ordering separately",
+      "name": "docker_firewall_backend",
+      "status": "UNKNOWN"
+    },
+    {
+      "detail": "Read-only inventory cannot establish actual project quota or cgroup enforcement",
+      "name": "quota_enforcement",
+      "status": "UNKNOWN"
+    }
+  ],
+  "format_version": 1,
+  "integration": [
+    {
+      "name": "image_build_checksum",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "resource_enforcement",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "launcher_mounts",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "systemd_lifecycle",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "github_one_job",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "multi_instance",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "fault_recovery",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "reboot_recovery",
+      "status": "NOT RUN"
+    },
+    {
+      "name": "network_isolation",
+      "status": "NOT RUN"
+    }
+  ],
+  "overall": "UNKNOWN",
+  "production_ready": false,
+  "scope": "local-read-only-inventory"
+}
