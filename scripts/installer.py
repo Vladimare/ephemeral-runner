@@ -189,7 +189,7 @@ class Installer:
         os.replace(temporary, home / 'current')
         self.sync(home)
 
-    def rollback(self, instance, journal):
+    def rollback(self, instance, journal, *, cleanup=True):
         home = self.base / 'instances' / instance
         self.stopped(instance)
         data = json.loads(journal.read_text())
@@ -206,8 +206,9 @@ class Installer:
         else:
             self.pointer(home, data['previous'])
         self.run(['systemctl', 'daemon-reload'])
-        journal.unlink()
-        self.sync(journal.parent)
+        if cleanup:
+            journal.unlink()
+            self.sync(journal.parent)
 
     def instance(self, action, instance, version=None, repository=None, network=None, image=None,
                  allow_unbounded_legacy_rollback=False):

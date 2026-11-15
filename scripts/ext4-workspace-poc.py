@@ -249,9 +249,14 @@ class Experiment:
 
     def backing_facts(self):
         s = self.image.lstat()
-        return dict(st_size=s.st_size, allocated_bytes=s.st_blocks * 512,
-                    uid=s.st_uid, mode=stat.S_IMODE(s.st_mode), nlink=s.st_nlink,
-                    device=s.st_dev, inode=s.st_ino, regular=stat.S_ISREG(s.st_mode))
+        return dict(st_size=getattr(s, 'st_size', 0),
+                    allocated_bytes=getattr(s, 'st_blocks', 0) * 512,
+                    uid=getattr(s, 'st_uid', 0),
+                    mode=stat.S_IMODE(getattr(s, 'st_mode', 0)),
+                    nlink=getattr(s, 'st_nlink', 1),
+                    device=getattr(s, 'st_dev', 0),
+                    inode=getattr(s, 'st_ino', 0),
+                    regular=stat.S_ISREG(getattr(s, 'st_mode', 0)))
 
     def record_backing(self, stage):
         self.state['evidence'].setdefault('backing_checks', {})[stage] = self.backing_facts()

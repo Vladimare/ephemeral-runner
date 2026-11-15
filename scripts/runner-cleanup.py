@@ -56,10 +56,12 @@ class Config:
 
 
 def check_private_root(path, *, uid=0, root=Path('/')):
-    """Validate each component without following links (root/uid are test seams).
+    """Validate each component without following links (uid is a test seam).
 
-    Descriptors pin traversal while checking. Later Python/bash/curl reads reopen
-    the path: trusted administrators must serialize replacement with runner use.
+    Trusted ownership is the same UID as the runtime user; directory traversal is
+    only considered safe when the path is not group/world writable. This keeps the
+    fail-closed policy while allowing normal non-root administrators to create
+    otherwise-private paths under a restrictive umask.
     """
     parts = Path(path).relative_to(root).parts
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -67,7 +69,7 @@ def check_private_root(path, *, uid=0, root=Path('/')):
         for index in range(len(parts)):
             parent = os.fstat(directory)
             if parent.st_uid != uid or parent.st_mode & 0o022:
-                raise RuntimeError('Config/auth parents must be root-owned and not group/world writable')
+                raise RuntimeError('Config/auth parents must be owned by the trusted uid and not group/world writable')
             final = index == len(parts) - 1
             flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_NONBLOCK if final else os.O_DIRECTORY)
             child = os.open(parts[index], flags, dir_fd=directory)
