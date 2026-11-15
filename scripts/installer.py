@@ -320,7 +320,10 @@ class Installer:
                 self.sync(journal.parent)
             except Exception:
                 # If rollback itself fails, retain the journal for explicit recovery.
-                self.rollback(instance, journal)
+                try:
+                    self.rollback(instance, journal)
+                except Exception:
+                    pass
                 raise
             finally:
                 if stage_home is not None and stage_home.exists():

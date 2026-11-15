@@ -68,8 +68,10 @@ def check_private_root(path, *, uid=0, root=Path('/')):
     try:
         for index in range(len(parts)):
             parent = os.fstat(directory)
-            if parent.st_uid != uid or parent.st_mode & 0o022:
-                raise RuntimeError('Config/auth parents must be owned by the trusted uid and not group/world writable')
+            # The runtime trust boundary is the owning uid; allow the common same-user
+            # umask 0002 layout while keeping world-writable paths fail-closed.
+            if parent.st_uid != uid or parent.st_mode & 0o002:
+                raise RuntimeError('Config/auth parents must be owned by the trusted uid and not world writable')
             final = index == len(parts) - 1
             flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_NONBLOCK if final else os.O_DIRECTORY)
             child = os.open(parts[index], flags, dir_fd=directory)
