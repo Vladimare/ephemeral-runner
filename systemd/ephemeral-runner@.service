@@ -1,4 +1,5 @@
 [Unit]
+StartLimitIntervalSec=0
 Description=Ephemeral GitHub Actions runner (%i)
 Wants=network-online.target docker.service
 After=network-online.target docker.service
@@ -9,10 +10,13 @@ Type=simple
 User=root
 ExecStartPre=-/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --sweep
 ExecStart=/usr/local/libexec/ephemeral-runner/runner-once.sh %i
-ExecStop=/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --current
+# Forced stop path: planned maintenance must wait for natural exit instead.
+ExecStop=/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --service-stop
 ExecStopPost=-/usr/local/libexec/ephemeral-runner/runner-cleanup.py --instance %i --current
 Restart=always
-RestartSec=15
+# Fixed bounded retry frequency, with eventual recovery after long outages.
+RestartSec=60
+RestartPreventExitStatus=75
 TimeoutStopSec=120
 # docker run returns 143 (128 + SIGTERM) on a deliberate docker stop.
 SuccessExitStatus=143

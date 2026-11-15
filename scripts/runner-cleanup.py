@@ -6,6 +6,8 @@ is read by curl from a root-only config file on the host.
 """
 
 import argparse
+import fcntl
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -40,6 +42,10 @@ class Config:
     @property
     def state(self):
         return STATE_BASE / self.instance / 'current-name'
+
+    @property
+    def maintenance(self):
+        return CONFIG_BASE / self.instance / "maintenance"
 
     @property
     def url(self):
@@ -222,7 +228,7 @@ def stop_container(name):
         raise RuntimeError(f'Container remains after stop: {name}')
 
 
-def current(cfg, dry_run):
+def current(cfg, dry_run, *, force=False):
     if not cfg.state.is_file():
         print('No current runner state; nothing to remove', flush=True)
         return
@@ -231,21 +237,95 @@ def current(cfg, dry_run):
         raise RuntimeError(f'Invalid current runner name: {name!r}')
     if dry_run:
         print(f'DRY RUN: current {name}, container_exists={docker_exists(name)}', flush=True)
-    else:
+    elif force:
+        print(f'FORCED SHUTDOWN {name}: may cancel an assigned/running job', flush=True)
         stop_container(name)
+    elif docker_exists(name):
+        raise RuntimeError(f'PENDING {name}: container exists; no stop attempted')
     found = [r for r in runners(cfg) if r.get('name') == name]
     for r in found:
         if not owned(cfg, r):
             raise RuntimeError(f'Refusing to delete registration not owned by instance: {name}')
-        if r.get('busy') is not False:
+        if r.get('status') != 'offline' or r.get('busy') is not False:
             print(f'DEFER {name}: busy={r.get("busy")}; state preserved', flush=True)
-            return
-        delete(cfg, r, dry_run)
+            raise RuntimeError('Registration is not confirmed offline and idle; retry later')
+        if not delete(cfg, r, dry_run):
+            raise RuntimeError('Container appeared; state preserved')
     if not dry_run:
+        if docker_exists(name):
+            raise RuntimeError('Container exists; state preserved')
         if any(r.get('name') == name for r in runners(cfg)):
             raise RuntimeError(f'GitHub registration still exists: {name}; state preserved')
         cfg.state.unlink(missing_ok=True)
         print(f'Registration absent; cleared state for {name}', flush=True)
+
+
+@contextmanager
+def instance_lock(cfg):
+    # Config traversal has already established trusted parents. All host-side
+    # cleanup/maintenance operations serialize; the launcher only reads the gate.
+    path = CONFIG_BASE / cfg.instance / 'lifecycle.lock'
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RuntimeError('Untrusted lifecycle lock')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def maintenance(cfg, operation):
+    if operation == 'plan':
+        # Exclusive create: an existing marker (even a damaged/symlink marker)
+        # inhibits launch. Never overwrite or follow it.
+        try:
+            fd = os.open(cfg.maintenance, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(fd, 'w') as stream:
+                stream.write('Maintenance requested; replacements inhibited\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            directory = os.open(cfg.maintenance.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        print('ARMED: no signals sent. A launch already in progress may still accept one job.', flush=True)
+        return
+    if not os.path.lexists(cfg.maintenance):
+        raise RuntimeError('Maintenance is not armed; use --plan-maintenance first')
+    # Never infer quiescence from GitHub busy=false. The launcher must have
+    # exited. Administrators must serialize external systemctl start operations.
+    for unit in (f'ephemeral-runner@{cfg.instance}.service',
+                 f'ephemeral-runner-cleanup@{cfg.instance}.service',
+                 f'ephemeral-runner-cleanup@{cfg.instance}.timer'):
+        state = command(['systemctl', 'show', '--property=ActiveState', '--value', unit]).stdout.strip()
+        if state not in ('inactive', 'failed'):
+            raise RuntimeError(f'PENDING {unit}: {state}; wait, do not stop the runner')
+    command(['docker', 'info', '--format', '{{.ServerVersion}}'])
+    # Check *all* instance registrations/containers, including orphans. An API
+    # outage or incomplete listing cannot produce READY.
+    for runner in runners(cfg):
+        if cfg.valid_name(str(runner.get('name', ''))):
+            if (not owned(cfg, runner) or runner.get('status') != 'offline'
+                    or runner.get('busy') is not False):
+                raise RuntimeError('PENDING: registration not confirmed owned/offline/idle')
+            if not delete(cfg, runner, False):
+                raise RuntimeError('PENDING: registered container remains')
+    # Unregistered orphan containers also prevent readiness (e.g. killed launcher).
+    containers = command(['docker', 'ps', '-a', '--format', '{{.Names}}']).stdout.splitlines()
+    if any(cfg.valid_name(name) for name in containers):
+        raise RuntimeError('PENDING: instance container remains; no stop attempted')
+    current(cfg, False)
+    if operation == 'resume':
+        cfg.maintenance.unlink()
+        print('RESUMED: gate removed; services remain stopped', flush=True)
+    else:
+        print('READY: stopped, containers absent, registrations absent; gate retained', flush=True)
 
 
 def main():
@@ -254,21 +334,38 @@ def main():
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument('--audit', action='store_true')
     group.add_argument('--sweep', action='store_true')
-    group.add_argument('--current', action='store_true')
+    group.add_argument('--current', action='store_true', help='Passive cleanup; never stops a container')
+    group.add_argument('--service-stop', action='store_true', help='Systemd hook: passive while maintenance is armed, forced otherwise')
+    group.add_argument('--force-current', action='store_true', help='Forced shutdown; may cancel a job')
+    group.add_argument('--plan-maintenance', action='store_true', help='Inhibit replacements without signalling current runner')
+    group.add_argument('--maintenance-status', action='store_true', help='Verify quiescence; nonzero means pending/unknown')
+    group.add_argument('--resume', action='store_true', help='Remove gate after verified quiescence; does not start services')
     group.add_argument('--validate-config', action='store_true',
                        help='Validate config/auth without contacting Docker or GitHub')
+    p.add_argument('--ack-maintenance-window', action='store_true',
+                   help='Acknowledge routing must be paused externally; a current launch may accept a job')
     p.add_argument('--dry-run', action='store_true')
     args = p.parse_args()
+    if args.plan_maintenance and not args.ack_maintenance_window:
+        p.error('--plan-maintenance requires --ack-maintenance-window; pause workflow routing externally')
+    if args.ack_maintenance_window and not args.plan_maintenance:
+        p.error('--ack-maintenance-window requires --plan-maintenance')
     cfg = load_config(args.instance)
     if args.validate_config:
         return
-    command(['docker', 'info', '--format', '{{.ServerVersion}}'])
-    if args.audit:
-        audit(cfg)
-    elif args.sweep:
-        sweep(cfg, args.dry_run)
-    else:
-        current(cfg, args.dry_run)
+    if args.dry_run and (args.plan_maintenance or args.maintenance_status or args.resume):
+        p.error('--dry-run is only supported for audit/sweep/current/force-current')
+    with instance_lock(cfg):
+        if args.plan_maintenance or args.maintenance_status or args.resume:
+            maintenance(cfg, 'plan' if args.plan_maintenance else 'resume' if args.resume else 'status')
+            return
+        command(['docker', 'info', '--format', '{{.ServerVersion}}'])
+        if args.audit:
+            audit(cfg)
+        elif args.sweep:
+            sweep(cfg, args.dry_run)
+        else:
+            current(cfg, args.dry_run, force=args.force_current or (args.service_stop and not os.path.lexists(cfg.maintenance)))
 
 
 if __name__ == '__main__':

@@ -24,6 +24,13 @@ source "$CONF"
 [[ "$DOCKER_NETWORK" != bridge && "$DOCKER_NETWORK" != host && "$DOCKER_NETWORK" != none ]] || exit 2
 [[ -n "$RUNNER_IMAGE" && "$RUNNER_IMAGE" != -* ]] || exit 2
 
+# Persistent host-only maintenance gate. A request racing after this check
+# may allow this one launch; maintenance never signals it or claims it stopped.
+if [[ -e "$BASE/maintenance" || -L "$BASE/maintenance" ]]; then
+    echo 'Maintenance armed; refusing replacement runner' >&2
+    exit 75
+fi
+
 # Numeric/enum-only JSON policy; capture helper failure before any token request.
 RESOURCE_OPTIONS=$(python3 "$RUNTIME/scripts/runner-resources.py" --instance "$INSTANCE")
 RESOURCE_ARGS=()
