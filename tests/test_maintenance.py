@@ -111,15 +111,17 @@ class MaintenanceTests(unittest.TestCase):
 
     def test_force_is_explicit_and_failure_keeps_state(self):
         self.stop.side_effect = RuntimeError('stop/rm failed')
-        with self.assertRaises(RuntimeError):
-            mod.current(self.cfg, False, force=True)
+        with patch.object(mod, 'runners', return_value=[]):
+            with self.assertRaises(RuntimeError):
+                mod.current(self.cfg, False, force=True)
         self.stop.assert_called_once_with(self.name)
         self.assertTrue(self.state.exists())
 
     def test_force_timeout_keeps_state(self):
         self.stop.side_effect = subprocess.TimeoutExpired('docker', 50)
-        with self.assertRaises(subprocess.TimeoutExpired):
-            mod.current(self.cfg, False, force=True)
+        with patch.object(mod, 'runners', return_value=[]):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                mod.current(self.cfg, False, force=True)
         self.assertTrue(self.state.exists())
 
     def test_no_gate_rejects_resume(self):
@@ -180,6 +182,14 @@ class MaintenanceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 mod.current(self.cfg, False, force=True)
         self.stop.assert_called_once_with(self.name)
+        self.assertTrue(self.state.exists())
+
+    def test_force_refuses_known_unowned_registration_before_stop(self):
+        foreign = dict(self.row, labels=[{'name': 'other'}])
+        with patch.object(mod, 'runners', return_value=[foreign]):
+            with self.assertRaisesRegex(RuntimeError, 'not owned'):
+                mod.current(self.cfg, False, force=True)
+        self.stop.assert_not_called()
         self.assertTrue(self.state.exists())
 
     def test_actual_stop_rm_failure_and_timeout_are_errors(self):

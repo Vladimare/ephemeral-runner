@@ -235,14 +235,24 @@ def current(cfg, dry_run, *, force=False):
     name = cfg.state.read_text().strip()
     if not cfg.valid_name(name):
         raise RuntimeError(f'Invalid current runner name: {name!r}')
+    found = None
     if dry_run:
         print(f'DRY RUN: current {name}, container_exists={docker_exists(name)}', flush=True)
     elif force:
         print(f'FORCED SHUTDOWN {name}: may cancel an assigned/running job', flush=True)
+        try:
+            found = [r for r in runners(cfg) if r.get('name') == name]
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            print(f'WARNING: GitHub preflight unavailable ({exc}); continuing forced shutdown', file=sys.stderr, flush=True)
+        if found is not None:
+            for r in found:
+                if not owned(cfg, r):
+                    raise RuntimeError(f'Refusing to stop runner not owned by instance: {name}')
         stop_container(name)
     elif docker_exists(name):
         raise RuntimeError(f'PENDING {name}: container exists; no stop attempted')
-    found = [r for r in runners(cfg) if r.get('name') == name]
+    if found is None:
+        found = [r for r in runners(cfg) if r.get('name') == name]
     for r in found:
         if not owned(cfg, r):
             raise RuntimeError(f'Refusing to delete registration not owned by instance: {name}')
