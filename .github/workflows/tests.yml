@@ -14,6 +14,28 @@ jobs:
           persist-credentials: false
       - name: Python tests
         run: python3 -m unittest discover -s tests -v
+      - name: Read-only host inventory (not an enforcement gate)
+        shell: bash
+        run: |
+          mkdir -p evidence
+          result=0
+          python3 scripts/check-host-compatibility.py > evidence/host-compatibility.json || result=$?
+          python3 - "$result" <<'PYREPORT'
+          import json, sys
+          with open('evidence/host-compatibility.json') as stream:
+              report = json.load(stream)
+          expected = {'PASS': 0, 'FAIL': 1, 'UNKNOWN': 2}[report['overall']]
+          assert int(sys.argv[1]) == expected
+          assert report['scope'] == 'local-read-only-inventory'
+          assert report['production_ready'] is False
+          assert all(gate['status'] == 'NOT RUN' for gate in report['integration'])
+          print('Host inventory:', report['overall'], '(live enforcement NOT RUN)')
+          PYREPORT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-compatibility
+          path: evidence/host-compatibility.json
+          if-no-files-found: error
       - name: Shell syntax checks
         run: |
           for file in scripts/*.sh docker/entrypoint.sh; do

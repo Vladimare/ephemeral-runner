@@ -81,6 +81,17 @@ A bounded read-only/tmpfs component experiment and a separately authorized
 workflow smoke plan are provided. They do not enable ext4 support; current ext4
 hosts still fail preflight before registration. No Docker host changes are made.
 
+## Host compatibility
+
+[Read-only host diagnostics](docs/HOST_COMPATIBILITY.md) report PASS / FAIL /
+UNKNOWN for local platform, Docker storage/cgroup support, quota mount options,
+capacity and network metadata. They make no changes and do not prove enforcement.
+Issue #9 live Linux integration and issue #10 lifecycle evidence remain open gates.
+
+```sh
+python3 scripts/check-host-compatibility.py --network er-ci
+```
+
 ## Resource policy
 
 Read [resource limits and supported hosts](docs/RESOURCE_LIMITS.md) before enabling
