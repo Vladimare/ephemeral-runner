@@ -20,7 +20,7 @@ On a new host, verify and configure **both INPUT and FORWARD paths** (as appropr
 
 This repository does not claim that a Docker bridge is an isolation boundary. The named bridge precondition is a deployment gate, not a firewall claim. A host can have a bridge network and still permit access to the host, LAN, loopback, local RFC1918/ULA/link-local ranges, metadata services and sibling runner containers unless the host firewall and Docker forwarding policy explicitly block them. This is the same network gate tracked in [issue #11](https://github.com/Vladimare/ephemeral-runner/issues/11); it remains a disposable-host validation step and is not proof of a hardened production deployment.
 
-Use the opt-in harness only on a disposable Linux host that is already being used for runners. It does not install or flush firewall rules, and it does not assume Docker's backend is `nftables` or `iptables`.
+Use the opt-in harness only on a disposable Linux host that is already being used for runners, and never on an active production host without explicit permission. It does not install or flush firewall rules, and it does not assume Docker's backend is `nftables` or `iptables`.
 
 ```bash
 # Example: probe a locally controlled listener on the same runner network.
