@@ -61,13 +61,18 @@ def check_private_root(path, *, uid=0, root=Path('/')):
     Descriptors pin traversal while checking. Later Python/bash/curl reads reopen
     the path: trusted administrators must serialize replacement with runner use.
     """
-    parts = Path(path).relative_to(root).parts
+    path = Path(path)
+    parts = path.relative_to(root).parts
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for index in range(len(parts)):
             parent = os.fstat(directory)
-            if parent.st_uid != uid or parent.st_mode & 0o022:
-                raise RuntimeError('Config/auth parents must be root-owned and not group/world writable')
+            if parent.st_uid != uid:
+                raise RuntimeError('Config/auth parents must be owned by the configured uid')
+            if parent.st_mode & 0o002:
+                raise RuntimeError('Config/auth parents must not be world writable')
+            if uid == 0 and parent.st_mode & 0o020:
+                raise RuntimeError('Config/auth parents must be root-owned and not group writable')
             final = index == len(parts) - 1
             flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_NONBLOCK if final else os.O_DIRECTORY)
             child = os.open(parts[index], flags, dir_fd=directory)
@@ -75,7 +80,7 @@ def check_private_root(path, *, uid=0, root=Path('/')):
                 try:
                     st = os.fstat(child)
                     if not stat.S_ISREG(st.st_mode) or st.st_uid != uid or stat.S_IMODE(st.st_mode) != 0o600:
-                        raise RuntimeError('Config/auth must be root-owned regular files with mode 0600')
+                        raise RuntimeError('Config/auth must be owned by the configured uid and have mode 0600')
                 finally:
                     os.close(child)
             else:
